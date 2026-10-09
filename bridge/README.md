@@ -16,7 +16,7 @@ pack is connected.
 | Power-on state is STOPPED; nothing is sent until `START` | `core.py` `Bridge.__init__`, `Bridge._start` |
 | Transmit allowlist, checked on the exact 16 bytes written, independent of the state machine | `txgate.py` `check_tx`, called by `TxGate.send` (the only CAN write in the package) |
 | Refused transmit forces STOPPED; failed transmit forces STOPPED and exits (status 3) so the restart flushes the CAN queue | `core.py` `Bridge._on_refused`, `Bridge._on_failed`; `service.py` `Service._fail`; `system/vanguard-bridge.service` `ExecStartPre` |
-| 11-bit frame on pack CAN2 or 29-bit frame on pack CAN1 (wiring swapped): STOPPED, `START` refused until restart | `service.py` `Service.step`; `core.py` `Bridge.latch_wiring_fault` |
+| A frame only the pack sends, seen on the wrong interface (wiring swapped): STOPPED, `START` refused until a new client connects | `service.py` `wiring_swap_evidence`, `Service.step`; `core.py` `Bridge.latch_wiring_fault`, `Bridge.connect` |
 | CAN socket error (for example interface down): STOPPED, exit 3 | `canio.py` `CanReceiver.read_frames`; `service.py` `Service.step` |
 | Heartbeats that waited in the socket during a loop stall cannot extend the keep-alive | `service.py` `Service._read_client` |
 | Pack CAN2 has no send path | `canio.py` `Can2ReceiveOnly`, `open_pack_can2`; `simlink.py` `SimCan2Socket` |
@@ -75,11 +75,18 @@ Commands are timed by when they reached the bridge's socket, not when the bridge
 to reading them (more exactly, by the last moment the socket was seen empty). If the bridge's
 loop stalls, heartbeats queued meanwhile therefore cannot keep the pack alive for more than
 1 s after the client really went silent, and a `START` that waited 1 s or more is refused.
+This also covers bytes a client wrote before the bridge accepted its connection. The
+arrival time is used only for the watchdog and the stale-`START` rule; keep-alive timing,
+`CLEAR`/`SLEEP` intervals and all timestamps use the current time.
 
 The bridge exits (status 3) after a CAN transmit error, a CAN socket error or a failed
 periodic interface check. systemd restarts it, and every start first re-runs the interface
 setup as root (`ExecStartPre`), whose down/up discards frames still queued for transmit. The
-client has to reconnect and send `START`.
+client has to reconnect and send `START`. systemd allows at most 10 starts per minute
+(`StartLimitBurst=10`, `StartLimitIntervalSec=60`) and then gives up until
+`sudo systemctl reset-failed vanguard-bridge`. A client must therefore back off after
+`S TXERROR` or a lost connection (for example wait a few seconds, longer after repeated
+failures) rather than reconnecting and sending `START` at once; the web app in step 3 will.
 
 ### Bridge to client
 
@@ -132,9 +139,13 @@ The mapping is printed to the journal at startup and sent to each client.
 
 `[pack_can2] guard`:
 
-The bridge also watches the traffic: pack CAN1 carries only 11-bit IDs and pack CAN2 only
-29-bit IDs. A frame of the wrong format on either bus means the wiring does not match the
-config; the bridge enters STOPPED and refuses `START` until it is restarted.
+The bridge also watches the traffic for frames only the pack sends: a 29-bit frame with
+source address `0xF3` on the pack CAN1 interface, or an 11-bit frame with an ID from the
+pack's CAN1 transmit list (`vanguard.frames`, for example `0x111`) on the pack CAN2 interface.
+Either means the wiring does not match the config: the bridge enters STOPPED and refuses
+`START` until a new client connects. Remote frames and other nodes' frames are ignored. A
+real swap trips again within about 50 ms of reconnecting, because the pack sends those frames
+every 50 to 100 ms.
 
 * `"listen-only"` (active): the CAN2 controller never transmits and never ACKs.
 * `"tc-drop-all"` (fallback, commented out): normal mode, so the controller ACKs pack frames;

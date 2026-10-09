@@ -6,8 +6,8 @@ frames from both buses go back as ``R`` lines, frames the bridge sent as ``T``
 lines, status as ``S`` lines.
 
 Fail-closed paths handled here: client disconnect, client too slow to read its
-output (buffer above :data:`MAX_OUTBUF`), a frame of the wrong ID format on a bus
-(wiring swapped: STOPPED, START refused until restart), and, with exit status 3, a
+output (buffer above :data:`MAX_OUTBUF`), a frame only the pack sends seen on the
+wrong interface (wiring swapped: STOPPED, START refused until a new client connects), and, with exit status 3, a
 CAN transmit error, a CAN socket error or a failed background interface check;
 SIGTERM/SIGINT; any exception escaping the loop (the process exits; the pack opens
 its contactors about 1 s after the last keep-alive). systemd re-runs the interface
@@ -33,13 +33,35 @@ from vanguard.wire import format_status
 
 from . import config as config_mod
 from .canio import Can2ReceiveOnly, CanReceiver, describe, open_pack_can1, open_pack_can2
-from .core import WATCHDOG_US, Bridge, LineAssembler
+from vanguard.frames import CAN1, CAN1_SPECS, PACK_TX
+
+from .canframe import RxFrame
+from .core import Bridge, LineAssembler
 from .netcheck import check_all
 from .simlink import SimCan1Socket, SimCan2Socket, SimLink
 
 MAX_OUTBUF = 256 * 1024
 READ_CHUNK = 4096
 MAX_CLIENT_READ_PER_STEP = 64 * 1024
+
+
+PACK_SOURCE_ADDRESS = 0xF3
+# 11-bit IDs the pack itself transmits on CAN1 (from vanguard's frame tables).
+PACK_CAN1_TX_IDS = frozenset(s.can_id for s in CAN1_SPECS if s.bus == CAN1 and s.direction == PACK_TX)
+
+
+def wiring_swap_evidence(bus: int, f: RxFrame) -> Optional[str]:
+    """A frame only the pack sends, seen on the wrong socket: the wiring is swapped.
+
+    Other nodes' frames (a stray J1939 frame on CAN1, say) and remote frames are ignored.
+    """
+    if f.err or f.rtr:
+        return None
+    if bus == 1 and f.eff and f.can_id & 0xFF == PACK_SOURCE_ADDRESS:
+        return f"pack CAN2 frame {f.can_id:#010x} (source 0xF3) on the pack CAN1 interface"
+    if bus == 2 and not f.eff and f.can_id in PACK_CAN1_TX_IDS:
+        return f"pack CAN1 frame {f.can_id:#05x} on the pack CAN2 interface"
+    return None
 
 
 def monotonic_us() -> int:
@@ -104,8 +126,10 @@ class Service:
         self.log = log
         self.info_lines = list(info_lines)
         self.recheck_poll = recheck_poll
-        # Lower bound on the arrival time of client bytes not yet read (see _read_client).
+        # Lower bounds on the arrival time of client bytes not yet read (see _read_client),
+        # and of connections (with their bytes) still waiting in the listen queue.
         self.client_since_us = clock_us()
+        self.listener_since_us = clock_us()
         self.pump = pump
         self.sim_status = sim_status
         self.max_wait_s = max_wait_s
@@ -136,7 +160,7 @@ class Service:
             return
         conn.setblocking(False)
         self.client = conn
-        self.client_since_us = self.clock()
+        self.client_since_us = self.listener_since_us  # its bytes may predate accept()
         self.assembler = LineAssembler()
         self.outbuf.clear()
         self.overflow = False
@@ -198,10 +222,8 @@ class Service:
                 return
             if err is not None:
                 self.bridge.status(err)
-            elif line.startswith("START ") and self.clock() - stamp >= WATCHDOG_US:
-                self.bridge.status(f"ERR {line} refused: stale (waited 1 s or more in the bridge)")
             else:
-                self.bridge.handle_line(line, stamp)
+                self.bridge.handle_line(line, self.clock(), arrival_us=stamp)
         if eof:
             self._drop_client("disconnected")
 
@@ -221,6 +243,8 @@ class Service:
     def _fail(self, reason: str) -> None:
         """Stop and end the loop with exit status 3 (systemd restarts; ExecStartPre resets the CAN interfaces)."""
         self.log(f"FATAL {reason}")
+        if self.bridge.fatal is None:
+            self.bridge.fatal = reason  # the state machine refuses START from here on
         self.bridge.force_stop(reason)
         self.exit_code = 3
         self.running = False
@@ -241,6 +265,8 @@ class Service:
             readable = []
         if self.client is not None and self.client not in readable:
             self.client_since_us = t_select  # no client bytes were waiting at t_select
+        if self.listener not in readable:
+            self.listener_since_us = t_select  # no connection was waiting at t_select
         self.bridge.tick(self.clock())  # watchdog first, before any buffered input is read
         if self.pump is not None:
             self.pump()
@@ -252,10 +278,9 @@ class Service:
             self._read_client()
         for rcv in self.receivers:
             for f in rcv.read_frames():
-                if not f.err and f.eff != (rcv.bus == 2):
-                    # Pack CAN1 uses only 11-bit IDs, pack CAN2 only 29-bit IDs.
-                    kind = "29-bit" if f.eff else "11-bit"
-                    self.bridge.latch_wiring_fault(f"{kind} ID {f.can_id:#x} on pack CAN{rcv.bus}")
+                swap = wiring_swap_evidence(rcv.bus, f)
+                if swap is not None:
+                    self.bridge.latch_wiring_fault(swap)
                 if f.err or f.rtr:
                     self.bridge.status(f"RX {rcv.bus} {describe(f)}")
                 else:

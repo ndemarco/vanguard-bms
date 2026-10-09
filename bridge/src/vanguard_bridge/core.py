@@ -59,7 +59,7 @@ class Bridge:
         self.last_clear_us: Optional[int] = None
         self.last_sleep_us: Optional[int] = None
         self.last_keepalive_sent_us: Optional[int] = None
-        self.wiring_fault: Optional[str] = None  # latched until restart
+        self.wiring_fault: Optional[str] = None  # latched until the next client connects
         self.fatal: Optional[str] = None  # set when the process must exit (service checks it)
         self.client_connected = False
         self.next_state_report_us = 0
@@ -125,7 +125,7 @@ class Bridge:
         self.force_stop("transmit failed; bridge exits so the CAN queue is flushed")
 
     def latch_wiring_fault(self, reason: str) -> None:
-        """A frame with the wrong ID format arrived on a bus: refuse START until restart."""
+        """A pack frame arrived on the wrong interface: refuse START until a new client connects."""
         if self.wiring_fault is None:
             self.wiring_fault = reason
             self.force_stop(f"bus format mismatch: wiring swapped? {reason}")
@@ -135,6 +135,10 @@ class Bridge:
     def connect(self, now_us: int) -> None:
         self._now = now_us
         self.client_connected = True
+        if self.wiring_fault is not None:
+            # A real swap re-trips within about 50 ms (pack frames every 50..100 ms).
+            self._log(f"wiring latch cleared by new client (was: {self.wiring_fault})")
+            self.wiring_fault = None
         self._report_state()
 
     def disconnect(self, now_us: int) -> None:
@@ -142,15 +146,21 @@ class Bridge:
         self.client_connected = False
         self.force_stop("client disconnected")
 
-    def handle_line(self, line: str, now_us: int) -> None:
-        """One complete client line (without the newline). Never raises."""
+    def handle_line(self, line: str, now_us: int, arrival_us: Optional[int] = None) -> None:
+        """One complete client line (without the newline). Never raises.
+
+        ``now_us`` is the current time and drives every timer and timestamp.
+        ``arrival_us`` (default ``now_us``) is a lower bound on when the line reached the
+        bridge; it is used only to feed the watchdog and for the stale-START rule.
+        """
         self._now = now_us
+        arrival = now_us if arrival_us is None else min(arrival_us, now_us)
         try:
-            self._handle(line, now_us)
+            self._handle(line, now_us, arrival)
         except Exception as e:
             self._fail_closed("command", e)
 
-    def _handle(self, line: str, now: int) -> None:
+    def _handle(self, line: str, now: int, arrival: int) -> None:
         if line not in COMMANDS:
             if line == "SLEEP 2":
                 self.status("ERR SLEEP 2 refused: deep shutdown is not allowed")
@@ -158,10 +168,10 @@ class Bridge:
                 self.status("ERR unknown command")
             return
         if line.startswith("START "):
-            self._start(line[6:], now)
+            self._start(line[6:], now, arrival)
         elif line == "HB":
             if self.state == RUNNING:
-                self.last_hb_us = max(self.last_hb_us, now)
+                self.last_hb_us = max(self.last_hb_us, arrival)
         elif line == "STOP":
             if self.state == RUNNING:
                 self.force_stop("client STOP")
@@ -171,23 +181,26 @@ class Bridge:
         else:
             self._sleep(line, now)
 
-    def _start(self, mode: str, now: int) -> None:
+    def _start(self, mode: str, now: int, arrival: int) -> None:
         if self.fatal is not None:
             self.status(f"ERR START refused: bridge is exiting ({self.fatal})")
             return
         if self.wiring_fault is not None:
             self.status(f"ERR START refused: bus format mismatch latched ({self.wiring_fault}); restart the bridge")
             return
+        if now - arrival >= WATCHDOG_US:
+            self.status(f"ERR START {mode} refused: stale (waited 1 s or more in the bridge)")
+            return
         if self.state == RUNNING:
             if mode != self.mode:
                 self.status(f"ERR START {mode} refused: running {self.mode}, send STOP first")
                 return
-            self.last_hb_us = max(self.last_hb_us, now)  # same-mode START is a heartbeat
+            self.last_hb_us = max(self.last_hb_us, arrival)  # same-mode START is a heartbeat
             self.status(f"OK START {mode}")
             return
         self.state = RUNNING
         self.mode = mode
-        self.last_hb_us = now
+        self.last_hb_us = arrival
         self.next_keepalive_us = now
         self.pending_clear = False
         self.status(f"OK START {mode}")
