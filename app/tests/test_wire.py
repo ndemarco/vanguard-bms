@@ -65,3 +65,12 @@ def test_json_errors(line):
 def test_read_jsonl_skips_blank_and_comments():
     lines = ["# header", "", frame_to_json(Frame(1, 1, 0x105, bytes(8))), "   ", frame_to_json(Frame(2, 1, 0x111, b""))]
     assert [f.ts_us for f in read_jsonl(lines)] == [1, 2]
+
+
+def test_t_lines_round_trip_as_tx():
+    f = Frame(100000, 1, 0x105, bytes([0, 0x11, 0, 0, 0, 0, 0, 0]), "tx")
+    line = format_frame(f, "T")
+    assert line == "T 1 105 8 0011000000000000 100000"
+    assert parse_line(line) == f
+    with pytest.raises(WireError):
+        format_frame(f, "X")

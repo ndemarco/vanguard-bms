@@ -3,6 +3,7 @@
 Line protocol (one line per event, UTF-8, ``\\n`` terminated)::
 
     R <bus> <id hex> <dlc> <data hex> <timestamp us>
+    T <bus> <id hex> <dlc> <data hex> <timestamp us>
     S <text>
 
 * ``R`` is a frame seen on a bus. ``bus`` is 1 or 2. ``id hex`` is the CAN identifier
@@ -11,6 +12,9 @@ Line protocol (one line per event, UTF-8, ``\\n`` terminated)::
   parser accepts lower case and an optional ``0x``. ``dlc`` is decimal, 0..8.
   ``data hex`` is ``dlc`` bytes as contiguous hex pairs, or ``-`` when ``dlc`` is 0.
   ``timestamp us`` is a non-negative integer, microseconds on the sender's clock.
+* ``T`` has the same fields as ``R`` and marks a frame the bridge itself transmitted, so a
+  log of the line protocol also carries the host's own traffic. It parses to a
+  :class:`Frame` with ``direction="tx"``.
 * ``S`` carries a free-text status message.
 
 JSON lines log: one JSON object per frame, one per line::
@@ -53,10 +57,13 @@ class Status:
     text: str
 
 
-def format_frame(f: Frame) -> str:
+def format_frame(f: Frame, tag: str = "R") -> str:
+    """Format an ``R`` line (or a ``T`` line with ``tag="T"``)."""
+    if tag not in ("R", "T"):
+        raise WireError(f"frame tag must be R or T, got {tag!r}")
     data = f.data.hex().upper() if f.data else "-"
     cid = f"{f.can_id:03X}" if f.bus == 1 else f"{f.can_id:08X}"
-    return f"R {f.bus} {cid} {len(f.data)} {data} {f.ts_us}"
+    return f"{tag} {f.bus} {cid} {len(f.data)} {data} {f.ts_us}"
 
 
 def format_status(text: str) -> str:
@@ -72,15 +79,15 @@ def _check_bus(bus: int) -> int:
 
 
 def parse_line(line: str) -> Union[Frame, Status]:
-    """Parse an ``R`` or ``S`` line. Raises :class:`WireError` if malformed."""
+    """Parse an ``R``, ``T`` or ``S`` line. Raises :class:`WireError` if malformed."""
     line = line.rstrip("\r\n")
     if line.startswith("S "):
         return Status(line[2:])
     if line == "S":
         return Status("")
     parts = line.split(" ")
-    if len(parts) != 6 or parts[0] != "R":
-        raise WireError(f"not an R or S line: {line!r}")
+    if len(parts) != 6 or parts[0] not in ("R", "T"):
+        raise WireError(f"not an R, T or S line: {line!r}")
     try:
         bus = _check_bus(int(parts[1]))
         can_id = int(parts[2], 16)
@@ -93,7 +100,7 @@ def parse_line(line: str) -> Union[Frame, Status]:
         raise WireError(f"dlc {dlc} does not match data in {line!r}")
     if can_id < 0 or can_id > 0x1FFFFFFF or ts < 0:
         raise WireError(f"id or timestamp out of range in {line!r}")
-    return Frame(ts, bus, can_id, data, "rx")
+    return Frame(ts, bus, can_id, data, "tx" if parts[0] == "T" else "rx")
 
 
 def frame_to_json(f: Frame) -> str:
