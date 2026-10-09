@@ -7,7 +7,7 @@ Commands per interface (shown for the shipped config; ``--dry-run`` prints them)
 
     ip link set dev can0 down
     ip link set dev can0 type can bitrate 500000 listen-only off
-    ip link set dev can0 txqueuelen 10
+    ip link set dev can0 txqueuelen 1
     tc qdisc del dev can0 root                      # failure ignored (none yet)
     tc qdisc add dev can0 root handle 1: prio
     tc filter add dev can0 parent 1: protocol all prio 1 basic match 'not canid(sff 0x105 sff 0x515)' action drop
@@ -15,7 +15,7 @@ Commands per interface (shown for the shipped config; ``--dry-run`` prints them)
 
     ip link set dev can1 down
     ip link set dev can1 type can bitrate 500000 listen-only on   # "off" with guard = "tc-drop-all"
-    ip link set dev can1 txqueuelen 10
+    ip link set dev can1 txqueuelen 1
     tc qdisc del dev can1 root
     tc qdisc add dev can1 root handle 1: prio
     tc filter add dev can1 parent 1: protocol all prio 1 basic action drop
@@ -41,7 +41,11 @@ from .config import BITRATE, Config
 from .netcheck import check_all, run_cmd, spi_device_of
 
 CAN1_FILTER_EMATCH = "not canid(sff 0x105 sff 0x515)"
-TXQUEUELEN = 10
+# One frame. With no ACK on pack CAN1 the controller retries its current frame forever and
+# the queue fills; a deep queue would hold stale keep-alives that burst out when the pack is
+# reconnected. The bridge exits on any TX error, and ExecStartPre re-runs this setup, whose
+# down/up discards the queue and the controller's TX buffer.
+TXQUEUELEN = 1
 
 
 def commands(cfg: Config) -> list:
@@ -64,7 +68,11 @@ def commands(cfg: Config) -> list:
     return out
 
 
-def main(argv: Optional[list] = None, *, run=run_cmd, spi_of=spi_device_of, out=sys.stdout) -> int:
+def _run_setup_cmd(argv: list) -> tuple:
+    return run_cmd(argv, timeout_s=10.0)  # configuration commands may load modules or reset the chip
+
+
+def main(argv: Optional[list] = None, *, run=_run_setup_cmd, spi_of=spi_device_of, out=sys.stdout) -> int:
     p = argparse.ArgumentParser(prog="vanguard-bridge-netsetup", description=__doc__.split("\n\n")[0])
     p.add_argument("--config", default=config_mod.DEFAULT_PATH)
     p.add_argument("--dry-run", action="store_true", help="print the commands, run nothing")
@@ -87,11 +95,11 @@ def main(argv: Optional[list] = None, *, run=run_cmd, spi_of=spi_device_of, out=
             continue
         rc, text = run(cmd)
         if rc != 0 and not may_fail:
-            print(f"FAILED ({rc}): {text.strip()}", file=out)
+            print(f"FAILED ({rc}): {' '.join(text.split())}", file=out)
             return 1
     if a.dry_run:
         return 0
-    errs = check_all(cfg, run, spi_of)
+    errs = check_all(cfg, run_cmd if run is _run_setup_cmd else run, spi_of)
     for e in errs:
         print(f"CHECK FAILED: {e}", file=out)
     return 1 if errs else 0

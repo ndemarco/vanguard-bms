@@ -26,17 +26,24 @@ class CanReceiver:
     def __init__(self, bus: int, sock):
         self.bus = bus
         self.__sock = sock
+        self.dead: Optional[str] = None  # set on a socket error (for example ENETDOWN); never cleared
 
     def fileno(self) -> Optional[int]:
         fd = self.__sock.fileno()
         return fd if fd is not None and fd >= 0 else None
 
     def read_frames(self) -> list:
+        """Frames received so far. Never raises; a socket error sets :attr:`dead`."""
         out: list = []
+        if self.dead is not None:
+            return out
         for _ in range(MAX_FRAMES_PER_READ):
             try:
                 raw = self.__sock.recv(FRAME_SIZE)
             except (BlockingIOError, InterruptedError):
+                break
+            except OSError as e:
+                self.dead = f"{type(e).__name__}: {e}"
                 break
             if len(raw) != FRAME_SIZE:
                 break

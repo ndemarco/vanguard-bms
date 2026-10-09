@@ -17,6 +17,7 @@ Rules implemented here (bridge/README.md has the full list):
 
 from __future__ import annotations
 
+import re
 from typing import Callable, Optional
 
 from vanguard.wire import Frame, format_frame, format_status
@@ -31,6 +32,7 @@ KEEPALIVE_PERIOD_US = 100_000
 WATCHDOG_US = 1_000_000
 CLEAR_MIN_INTERVAL_US = 100_000
 SLEEP_MIN_INTERVAL_US = 1_000_000
+SLEEP_AFTER_KEEPALIVE_US = 1_500_000  # owner policy: contactors must already be open
 STATE_REPORT_US = 1_000_000
 MAX_LINE_BYTES = 64
 
@@ -56,6 +58,9 @@ class Bridge:
         self.pending_clear = False
         self.last_clear_us: Optional[int] = None
         self.last_sleep_us: Optional[int] = None
+        self.last_keepalive_sent_us: Optional[int] = None
+        self.wiring_fault: Optional[str] = None  # latched until restart
+        self.fatal: Optional[str] = None  # set when the process must exit (service checks it)
         self.client_connected = False
         self.next_state_report_us = 0
 
@@ -66,7 +71,8 @@ class Bridge:
             self._emit_fn(line)
 
     def status(self, text: str) -> None:
-        self._emit(format_status(text))
+        """Send an S line. Never raises: text is reduced to one line of printable ASCII."""
+        self._emit(format_status(sanitize(text)))
 
     def state_text(self) -> str:
         return f"STATE {self.state}" + (f" {self.mode}" if self.state == RUNNING else "")
@@ -102,6 +108,8 @@ class Bridge:
 
     def _on_sent(self, raw: bytes) -> None:
         f = unpack(raw)
+        if f.can_id == KEEPALIVE_ID:
+            self.last_keepalive_sent_us = self._now
         self._emit(format_frame(Frame(self._now, 1, f.can_id, f.data, "tx"), "T"))
 
     def _on_refused(self, raw: bytes, reason: str) -> None:
@@ -109,8 +117,18 @@ class Bridge:
         self.force_stop("transmit refused by allowlist")
 
     def _on_failed(self, raw: bytes, reason: str) -> None:
+        # The frame (and others) may still sit in the qdisc or the controller's TX buffer and
+        # go out when the bus recovers. Stop, and ask the service to exit so systemd re-runs
+        # netsetup (interface down/up), which discards them before the bridge runs again.
+        self.fatal = f"transmit failed: {reason}"
         self.status(f"TXERROR {reason}")
-        self.force_stop("transmit failed")
+        self.force_stop("transmit failed; bridge exits so the CAN queue is flushed")
+
+    def latch_wiring_fault(self, reason: str) -> None:
+        """A frame with the wrong ID format arrived on a bus: refuse START until restart."""
+        if self.wiring_fault is None:
+            self.wiring_fault = reason
+            self.force_stop(f"bus format mismatch: wiring swapped? {reason}")
 
     # ----------------------------------------------------- client side
 
@@ -143,7 +161,7 @@ class Bridge:
             self._start(line[6:], now)
         elif line == "HB":
             if self.state == RUNNING:
-                self.last_hb_us = now
+                self.last_hb_us = max(self.last_hb_us, now)
         elif line == "STOP":
             if self.state == RUNNING:
                 self.force_stop("client STOP")
@@ -154,11 +172,17 @@ class Bridge:
             self._sleep(line, now)
 
     def _start(self, mode: str, now: int) -> None:
+        if self.fatal is not None:
+            self.status(f"ERR START refused: bridge is exiting ({self.fatal})")
+            return
+        if self.wiring_fault is not None:
+            self.status(f"ERR START refused: bus format mismatch latched ({self.wiring_fault}); restart the bridge")
+            return
         if self.state == RUNNING:
             if mode != self.mode:
                 self.status(f"ERR START {mode} refused: running {self.mode}, send STOP first")
                 return
-            self.last_hb_us = now  # same-mode START is a heartbeat
+            self.last_hb_us = max(self.last_hb_us, now)  # same-mode START is a heartbeat
             self.status(f"OK START {mode}")
             return
         self.state = RUNNING
@@ -181,8 +205,17 @@ class Bridge:
             self.status("OK CLEAR")
 
     def _sleep(self, line: str, now: int) -> None:
+        if self.fatal is not None:
+            self.status(f"ERR {line} refused: bridge is exiting ({self.fatal})")
+            return
+        if self.wiring_fault is not None:
+            self.status(f"ERR {line} refused: bus format mismatch latched; restart the bridge")
+            return
         if self.state != STOPPED:
             self.status(f"ERR {line} refused: only allowed while STOPPED")
+            return
+        if self.last_keepalive_sent_us is not None and now - self.last_keepalive_sent_us < SLEEP_AFTER_KEEPALIVE_US:
+            self.status(f"ERR {line} refused: less than 1.5 s since the last 0x105")
             return
         if self.last_sleep_us is not None and now - self.last_sleep_us < SLEEP_MIN_INTERVAL_US:
             self.status(f"ERR {line} refused: less than 1 s since the last SLEEP")
@@ -272,3 +305,12 @@ class LineAssembler:
         if any(b < 0x20 or b > 0x7E for b in line):
             return None, "ERR line contains non-ASCII or control bytes"
         return line.decode("ascii"), None
+
+
+_UNPRINTABLE = re.compile(r"[^\x20-\x7e]+")
+
+
+def sanitize(text: object, limit: int = 400) -> str:
+    """One line of printable ASCII, whitespace runs collapsed, at most ``limit`` characters."""
+    t = " ".join(_UNPRINTABLE.sub(" ", str(text)).split())
+    return t if len(t) <= limit else t[:limit - 3] + "..."

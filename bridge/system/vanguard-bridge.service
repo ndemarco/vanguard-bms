@@ -10,8 +10,13 @@ After=vanguard-can-setup.service
 Type=simple
 User=vanguard-bridge
 Group=vanguard
+# "+" runs this one step as root without the sandbox below. Every (re)start takes both
+# interfaces down and up again, which drops anything still queued for transmit (qdisc and
+# the MCP2515 TX buffer) from a previous run, then reinstalls and verifies the filters.
+ExecStartPre=+/opt/vanguard-bridge/venv/bin/vanguard-bridge-netsetup --config /etc/vanguard-bridge/bridge.toml
 ExecStart=/opt/vanguard-bridge/venv/bin/vanguard-bridge --config /etc/vanguard-bridge/bridge.toml
-# Exit 2 = startup refusal (guards missing): do not retry in a loop.
+# Exit 3 = transmit error, socket error or failed interface check: restart (and so re-run
+# ExecStartPre). Exit 2 = startup refusal (guards missing): do not retry in a loop.
 Restart=on-failure
 RestartSec=2
 RestartPreventExitStatus=2

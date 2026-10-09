@@ -178,6 +178,7 @@ def test_sleep_refused_while_running_and_rate_limited(h):
     h.cmd("SLEEP 1")
     assert all(f.can_id == 0x105 for f in h.writer.frames())
     h.cmd("STOP")
+    h.now += 1_500_000
     h.cmd("SLEEP 1")
     h.cmd("SLEEP 3")  # within 1 s: refused
     assert sum(f.can_id == 0x515 for f in h.writer.frames()) == 1
