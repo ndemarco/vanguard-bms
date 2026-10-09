@@ -15,14 +15,17 @@ pack is connected.
 |---|---|
 | Power-on state is STOPPED; nothing is sent until `START` | `core.py` `Bridge.__init__`, `Bridge._start` |
 | Transmit allowlist, checked on the exact 16 bytes written, independent of the state machine | `txgate.py` `check_tx`, called by `TxGate.send` (the only CAN write in the package) |
-| Refused or failed transmit forces STOPPED | `core.py` `Bridge._on_refused`, `Bridge._on_failed` |
+| Refused transmit forces STOPPED; failed transmit forces STOPPED and exits (status 3) so the restart flushes the CAN queue | `core.py` `Bridge._on_refused`, `Bridge._on_failed`; `service.py` `Service._fail`; `system/vanguard-bridge.service` `ExecStartPre` |
+| 11-bit frame on pack CAN2 or 29-bit frame on pack CAN1 (wiring swapped): STOPPED, `START` refused until restart | `service.py` `Service.step`; `core.py` `Bridge.latch_wiring_fault` |
+| CAN socket error (for example interface down): STOPPED, exit 3 | `canio.py` `CanReceiver.read_frames`; `service.py` `Service.step` |
+| Heartbeats that waited in the socket during a loop stall cannot extend the keep-alive | `service.py` `Service._read_client` |
 | Pack CAN2 has no send path | `canio.py` `Can2ReceiveOnly`, `open_pack_can2`; `simlink.py` `SimCan2Socket` |
 | Keep-alive every 100 ms, 1 s watchdog fed only by `HB` / `START` | `core.py` `Bridge._tick` |
 | Client disconnect, slow client, internal error, SIGTERM: STOPPED | `core.py` `Bridge.disconnect`, `Bridge._fail_closed`; `service.py` `Service._drop_client`, `Service.run` |
 | `CLEAR` once per 100 ms, single-shot D1 = 0x13 | `core.py` `Bridge._clear`, `Bridge._tick` |
 | `SLEEP 1` / `SLEEP 3` only while STOPPED | `core.py` `Bridge._sleep` |
 | OS layer: pack CAN1 egress filter (only 0x105 and 0x515), pack CAN2 listen-only plus drop-all filter | `netsetup.py` `commands` |
-| Bridge refuses to start (exit 2), or stops and exits (exit 3) while running, without those guards | `netcheck.py` `check_all`; `service.py` `main`, `Service.step` |
+| Bridge refuses to start (exit 2), or stops and exits (exit 3) while running, without those guards; the periodic check runs in a thread | `netcheck.py` `check_all`; `service.py` `main`, `BackgroundChecker`, `Service.step` |
 | No GPIO: the hardware enable input is not driven | no GPIO code exists |
 
 The transmit allowlist: standard 11-bit frames only, DLC 8, no remote (RTR) or error flag,
@@ -59,7 +62,7 @@ and reported once. Bytes outside 0x20..0x7E are rejected.
 | `HB` | any time | feeds the watchdog while RUNNING; no reply |
 | `STOP` | any time | enter STOPPED; `S OK STOP` |
 | `CLEAR` | RUNNING, at least 100 ms after the last accepted `CLEAR` | next `0x105` carries D1 = `0x13`, then back to `0x11` |
-| `SLEEP 1` / `SLEEP 3` | STOPPED, at most once per second | one `0x515` with D0 = `0x10` / `0x30` |
+| `SLEEP 1` / `SLEEP 3` | STOPPED, at least 1.5 s after the last `0x105` was sent, at most once per second | one `0x515` with D0 = `0x10` / `0x30` |
 
 Anything else, including `SLEEP 2`, gets `S ERR ...` and changes nothing. Errors and
 refused commands never feed the watchdog.
@@ -67,6 +70,16 @@ refused commands never feed the watchdog.
 Watchdog: while RUNNING, if 1 s passes without `HB` or `START`, the bridge stops sending
 `0x105` at once, enters STOPPED, sends `S STOP watchdog: no HB or START for 1 s` and stays
 STOPPED until a fresh `START`. A client should send `HB` every 250 ms or so.
+
+Commands are timed by when they reached the bridge's socket, not when the bridge got round
+to reading them (more exactly, by the last moment the socket was seen empty). If the bridge's
+loop stalls, heartbeats queued meanwhile therefore cannot keep the pack alive for more than
+1 s after the client really went silent, and a `START` that waited 1 s or more is refused.
+
+The bridge exits (status 3) after a CAN transmit error, a CAN socket error or a failed
+periodic interface check. systemd restarts it, and every start first re-runs the interface
+setup as root (`ExecStartPre`), whose down/up discards frames still queued for transmit. The
+client has to reconnect and send `START`.
 
 ### Bridge to client
 
@@ -81,7 +94,7 @@ STOPPED until a fresh `START`. A client should send `HB` every 250 ms or so.
 | `S ERR <reason>` | command refused or malformed input |
 | `S STOP <reason>` | the bridge entered (or confirmed) STOPPED and why |
 | `S TXREFUSED <frame hex> <reason>` | the allowlist refused a frame (a bridge bug); state is STOPPED |
-| `S TXERROR <reason>` | the CAN socket write failed (for example no ACK, queue full); state is STOPPED |
+| `S TXERROR <reason>` | the CAN socket write failed (for example no ACK, queue full); state is STOPPED and the bridge exits |
 | `S RX <bus> remote/error id=... dlc=...` | a remote or error frame was received |
 | `S SIM <text>` | simulator event (`--simulate` only) |
 
@@ -118,6 +131,10 @@ refuse to run unless `/sys/class/net/<interface>/device` resolves to the configu
 The mapping is printed to the journal at startup and sent to each client.
 
 `[pack_can2] guard`:
+
+The bridge also watches the traffic: pack CAN1 carries only 11-bit IDs and pack CAN2 only
+29-bit IDs. A frame of the wrong format on either bus means the wiring does not match the
+config; the bridge enters STOPPED and refuses `START` until it is restarted.
 
 * `"listen-only"` (active): the CAN2 controller never transmits and never ACKs.
 * `"tc-drop-all"` (fallback, commented out): normal mode, so the controller ACKs pack frames;
@@ -209,8 +226,8 @@ captured; replace it with real output after step A.
     tc qdisc show dev can1
     tc filter show dev can1 parent 1:
 
-Expect `bitrate 500000` on both, `can <LISTEN-ONLY> state` on pack CAN2 only, `qdisc prio 1:
-root` on both, `NOT canid(sff 0x105 sff 0x515)` with `gact action drop` on pack CAN1, and a
+Expect `LOWER_UP` and a state other than BUS-OFF / STOPPED / SLEEPING on pack CAN1, `bitrate 500000` on both, `can <LISTEN-ONLY> state` on pack CAN2 only, `qdisc prio 1:
+root` on both, a filter in chain 0, `NOT canid(sff 0x105 sff 0x515)` with `gact action drop` on pack CAN1, and a
 `basic` filter with no match and `gact action drop` on pack CAN2. Then copy the outputs over
 `tests/samples/ip_can1_ok.txt`, `ip_can2_listen_only_ok.txt`, `qdisc_prio_ok.txt`,
 `filter_can1_ok.txt` and `filter_can2_dropall_ok.txt` and rerun the tests. If the text differs,
@@ -249,6 +266,19 @@ H/L, fit both termination jumpers. Pack CAN1 is assumed to be `can0` here.
    again to reset `can0`.
 9. Remove the loopback wire.
 
+**C2. Transmit error and restart (pack connected on the bench, no load on the pack output).**
+Start the bridge, connect a client, `START DISCHARGE` with `HB` every 250 ms. Unplug the
+pack CAN1 lines at the HAT.
+
+1. The client receives `S TXERROR ...` and `S STOP transmit failed...` within about 0.1 s,
+   and the connection closes.
+2. `journalctl -u vanguard-bridge` shows `FATAL transmit failed`, the exit, `ExecStartPre`
+   running the setup, and a fresh start in STOPPED.
+3. In a second terminal start `candump -td <pack CAN1 interface>` (it shows only frames
+   actually sent). Reconnect the pack CAN1 lines. No `0x105` may appear: the pack must open
+   its contactors and stay open. If any `0x105` appears, the interface down/up does not clear
+   the queue on this driver; stop and fix that before using the bridge.
+
 **D. Hardware facts not confirmed from the Waveshare wiki:** which kernel name each controller
 gets (handled by the SPI check), the exact SPI device names (`spi1.1`/`spi1.2`, step 2), that
 the mcp2515 driver accepts `listen-only on` (step A), that `em_canid`, `cls_basic`, `sch_prio`
@@ -261,14 +291,16 @@ BCM 22/13 and the overlay lines in `system/config.txt.snippet`.
 
 * The tc filter checks the CAN ID only. DLC, payload bytes and the RTR flag are enforced by
   `txgate.check_tx` alone.
-* If pack CAN1 stops ACKing, up to 10 queued keep-alives (`txqueuelen 10`, set by the setup
-  instead of the wiki's 65536) can go out when the bus recovers, after the bridge has already
-  entered STOPPED. That keeps the pack alive for at most about 1 s longer.
+* If pack CAN1 stops ACKing, the MCP2515 retries its current frame forever (error-passive,
+  not bus-off). The setup uses `txqueuelen 1` (not the wiki's 65536), and the bridge exits on
+  the first transmit error so that the restart's interface down/up discards the stuck frames.
+  That this down/up really empties the controller's buffer is to be confirmed on the Pi
+  (bench step C2).
 * Python cannot make a stored socket truly unreachable. `Can2ReceiveOnly` keeps it in a
   name-mangled attribute and has no write method; the OS-layer guards are the hard barrier.
-* The periodic interface check runs `ip` and `tc` in the event loop every 5 s; that can delay
-  one keep-alive by a few tens of milliseconds (the pack tolerates 1 s).
-* Any CAN write error stops the bridge. The client has to send `START` again.
+* The periodic interface check runs in a background thread (each command has a 0.5 s time
+  limit); a check that has not completed for 20 s counts as a failure.
+* Any CAN write error stops the bridge and restarts it. The client has to reconnect and send `START`.
 
 ## Development
 
