@@ -1,0 +1,15 @@
+# Append to /boot/firmware/config.txt (Raspberry Pi OS bookworm), then reboot.
+# Source: Waveshare wiki, 2-CH CAN HAT+ (https://www.waveshare.com/wiki/2-CH_CAN_HAT+),
+# lines copied verbatim. Confirmed from the wiki: 16 MHz crystal (oscillator=16000000),
+# SPI1 with CS_0 on CE1 (BCM 17) and CS_1 on CE2 (BCM 16), INT_0 on BCM 22 and INT_1 on BCM 13
+# (the board's default 0-ohm resistor positions; the wiki shows how to move them).
+# NOT confirmed by the wiki: which kernel name (can0/can1) each controller gets. The bridge
+# does not depend on it: it checks the SPI device (spi1.1 / spi1.2) in bridge.toml.
+# Verify on the Pi: read the crystal marking on the HAT (16.000), and `dtoverlay -h mcp2515`
+# must list the spi1-1 / spi1-2 parameters.
+dtparam=spi=on
+# The wiki lists dtoverlay=i2c0 as well; it is not needed for CAN. Kept as published.
+dtoverlay=i2c0
+dtoverlay=spi1-3cs
+dtoverlay=mcp2515,spi1-1,oscillator=16000000,interrupt=22
+dtoverlay=mcp2515,spi1-2,oscillator=16000000,interrupt=13
