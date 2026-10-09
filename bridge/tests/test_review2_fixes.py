@@ -81,6 +81,7 @@ def test_backdated_start_uses_current_time_for_timers():
     h = Harness()
     arrival = h.now
     h.now += 600_000  # START sat in the socket for 0.6 s
+    h.bridge.note_pack_can1_frame(h.now)
     h.bridge.handle_line("START DISCHARGE", h.now, arrival_us=arrival)
     h.bridge.tick(h.now)
     assert h.writer.times == [600_000]                 # one 0x105, not two
