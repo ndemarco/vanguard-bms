@@ -4,20 +4,20 @@
 #
 # Which HAT channel is wired to which pack bus is YOUR wiring choice. Kernel names can0/can1
 # come from probe order and are not tied to a HAT terminal, so each bus also names the SPI
-# device its MCP2515 sits on; both programs refuse to run if /sys/class/net/<interface>/device
+# device its CAN controller sits on; both programs refuse to run if /sys/class/net/<interface>/device
 # does not resolve to that SPI device. With the Waveshare overlays (config.txt.snippet):
-#   spi1.1 = first MCP2515 (CS_0, INT_0 on GPIO 22) = HAT channel CAN_0 [verify on the Pi]
-#   spi1.2 = second MCP2515 (CS_1, INT_1 on GPIO 13) = HAT channel CAN_1 [verify on the Pi]
+#   spi0.0 = MCP2518FD on SPI0 CE0, INT on GPIO 25
+#   spi1.0 = MCP2518FD on SPI1 CE0, INT on GPIO 24
 
 [pack_can1]
 # Pack CAN1: 11-bit IDs. The only bus the bridge transmits on (0x105, 0x515 allowlist).
 interface = "can0"
-spi_device = "spi1.1"
+spi_device = "spi1.0"
 
 [pack_can2]
 # Pack CAN2: 29-bit IDs. Receive only. A tc filter dropping every frame is always installed.
 interface = "can1"
-spi_device = "spi1.2"
+spi_device = "spi0.0"
 # Active: the controller is in listen-only mode (never ACKs, never transmits).
 guard = "listen-only"
 # Fallback, only if listen-only makes the pack retransmit one frame forever (no other node on

@@ -1,7 +1,7 @@
 # Vanguard battery bridge service
 
 Step 2 of the Vanguard battery bridge. A small Python service for a Raspberry Pi 4 with a
-Waveshare 2-CH CAN HAT+. It owns both pack CAN buses, sends the pack's keep-alive, and serves
+Waveshare 2-CH CAN FD HAT (two MCP2518FD). It owns both pack CAN buses, sends the pack's keep-alive, and serves
 exactly one controlling client (the web app, step 3) over a Unix socket with a line-based
 ASCII protocol. It is the safety core of the project: it decides what reaches the pack.
 
@@ -133,7 +133,7 @@ Press Ctrl-C to disconnect; the bridge enters STOPPED.
 
 `system/bridge.toml`, installed as `/etc/vanguard-bridge/bridge.toml`, holds the only copy of
 the mapping between pack buses and HAT channels. For each pack bus it names the kernel
-interface **and** the SPI device of its MCP2515. Kernel names `can0`/`can1` follow driver probe
+interface **and** the SPI device of its CAN controller. Kernel names `can0`/`can1` follow driver probe
 order and are not guaranteed to follow the HAT terminal labels, so both the setup and the bridge
 refuse to run unless `/sys/class/net/<interface>/device` resolves to the configured SPI device.
 The mapping is printed to the journal at startup and sent to each client.
@@ -178,14 +178,13 @@ Raspberry Pi OS bookworm, 64-bit. Run every command on the Pi.
 
        sudo apt install python3-venv iproute2 can-utils socat
 
-2. Device tree: append `bridge/system/config.txt.snippet` to `/boot/firmware/config.txt`, set
-   the HAT's logic-voltage jumper to 3.3 V (Waveshare wiki), reboot, then check:
+2. Device tree: append `bridge/system/config.txt.snippet` to `/boot/firmware/config.txt`, reboot, then check:
 
        dmesg | grep -i mcp251
        ls -l /sys/class/net/can0/device /sys/class/net/can1/device
 
-   Expect two "MCP2515 successfully initialized" lines and links ending in `spi1.1` and
-   `spi1.2`.
+   Expect two "MCP2518FD ... successfully initialized" lines and links ending in `spi1.0` and
+   `spi0.0` (in either order).
 3. Termination: CAN1 and CAN2 are separate buses; fit the HAT's 120 ohm jumper on a channel
    only if the HAT is at one end of that bus (with only the pack and the HAT, it is).
 4. Decide the wiring (which HAT terminal goes to pack CAN1, which to pack CAN2), then install
@@ -305,18 +304,18 @@ pack CAN1 lines at the HAT.
    the queue on this driver; stop and fix that before using the bridge.
 
 **D. Hardware facts not confirmed from the Waveshare wiki:** which kernel name each controller
-gets (handled by the SPI check), the exact SPI device names (`spi1.1`/`spi1.2`, step 2), that
+gets (handled by the SPI check), the exact SPI device names (`spi1.0`/`spi0.0`, step 2), that
 the mcp2515 driver accepts `listen-only on` (step A), that `em_canid`, `cls_basic`, `sch_prio`
 and `act_gact` exist in the Raspberry Pi kernel (`sudo modprobe -a can can_raw sch_prio cls_basic em_canid act_gact`),
 and that a qdisc added while the interface is down survives `ip link set up` (step A shows it).
-The wiki does confirm the 16 MHz crystal, SPI1 with chip selects on BCM 17/16, interrupts on
-BCM 22/13 and the overlay lines in `system/config.txt.snippet`.
+The overlays come from the Waveshare 2-CH CAN FD HAT wiki: SPI0 and SPI1 each with chip select 0, interrupts on
+BCM 25/24, and the overlay lines in `system/config.txt.snippet`.
 
 ## Known limits
 
 * The tc filter checks the CAN ID only. DLC, payload bytes and the RTR flag are enforced by
   `txgate.check_tx` alone.
-* If pack CAN1 stops ACKing, the MCP2515 retries its current frame forever (error-passive,
+* If pack CAN1 stops ACKing, the CAN controller retries its current frame forever (error-passive,
   not bus-off). The setup uses `txqueuelen 1` (not the wiki's 65536), and the bridge exits on
   the first transmit error so that the restart's interface down/up discards the stuck frames.
   That this down/up really empties the controller's buffer is to be confirmed on the Pi
