@@ -2,7 +2,7 @@
 
 Status: derived by disassembling the full flash image `DSPIC33EP128GS806.hex` read from a recovered
 Vanguard lithium pack (Club Car Tempo golf car, NMC, 14 series cells, about 51.6 V nominal).
-Nothing here has been checked against a live pack. Every claim carries a confidence tag:
+The image itself is not in this repository. Nothing here has been checked against a live pack. Every claim carries a confidence tag:
 
 | Tag | Meaning |
 |---|---|
@@ -12,6 +12,25 @@ Nothing here has been checked against a live pack. Every claim carries a confide
 
 Addresses written as `wa 00a040` are program word addresses (the same numbers as in the Ghidra listing).
 Supporting notes (per-frame evidence, RAM glossaries, scripts) are in `analysis/`.
+
+## Pack nameplate (owner-reported)
+
+| Item | Value |
+|---|---|
+| Model series | Vanguard 48V 3.5 kWh Commercial Battery (Fi3.5), or the legacy 3.8 kWh 8010 series |
+| Part number | Briggs & Stratton / Vanguard 80090401 |
+| Nominal capacity | 67.5 Ah / 3.8 kWh at 51.6 V nominal |
+| Full-charge voltage | 58.3 V to 58.8 V |
+| Discharge cutoff voltage | 35.0 V |
+| Charger profile | Delta-Q algorithm #293 (v1.00) |
+
+Cross-checks against the firmware:
+
+* The 58.8 V upper limit and 35.0 V cutoff match the firmware pack-voltage limits (`analysis/can1.md`, bytes B4-B7 of the limits frame) [C].
+* Nameplate capacity (67.5 Ah) is below every firmware default capacity (73, 75, 98, 134, 72, 76 Ah). The nearest is variant 0 (73 Ah, 24 parallel cells), which suggests the firmware default carries margin over the rated value [I].
+* 67.5 Ah x 51.6 V is 3.48 kWh, which matches the "3.5 kWh" series name. The "3.8 kWh" figure matches the 73 Ah default (3.77 kWh).
+* Owner cell count: 14 modules of 32 cells each (4x8 layout), 448 cells, 32 in parallel per series group. In the firmware tables 32 parallel matches variant 2 (98 Ah, about 3.06 Ah per cell), not the nameplate.
+* Unresolved: 67.5 Ah over 32 parallel cells is 2.1 Ah per cell, while every firmware variant assumes about 3 Ah per cell (73 Ah / 24, 98 Ah / 32). Either the cells are about 2.1 Ah, or the nameplate and the firmware variant disagree. The cell part number and the variant index the pack reports (`0x0CFF3EF3` B0, `0x513` B0) settle it.
 
 ## 1. Read this first
 
