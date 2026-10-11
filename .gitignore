@@ -1,5 +1,33 @@
+# Python
 .venv/
 __pycache__/
+*.py[cod]
 *.egg-info/
+build/
+dist/
 .pytest_cache/
+.coverage
+htmlcov/
+
+# Session logs written by the web app
 vanguard-logs/
+*.jsonl
+
+# Firmware images and flash dumps (manufacturer's property; never commit)
+*.hex
+*.bin
+*.elf
+
+# Ghidra projects
+*.gpr
+*.rep/
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Claude Code local settings
+.claude/settings.local.json
