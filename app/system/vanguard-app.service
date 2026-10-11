@@ -1,0 +1,53 @@
+# Install as /etc/systemd/system/vanguard-app.service.
+# Unprivileged: talks to the bridge over its Unix socket (group "vanguard") and serves the page on
+# 127.0.0.1 only. Reach it from a PC with: ssh -L 8000:127.0.0.1:8000 pi@<host>
+[Unit]
+Description=Vanguard battery web app (page for the bridge)
+After=vanguard-bridge.service
+Wants=vanguard-bridge.service
+
+[Service]
+Type=simple
+User=vanguard-app
+Group=vanguard-app
+SupplementaryGroups=vanguard
+ExecStart=/opt/vanguard-bridge/venv/bin/vanguard-app --socket /run/vanguard-bridge/bridge.sock --host 127.0.0.1 --port 8000 --log-dir /var/lib/vanguard-app/logs
+# The app never starts the pack by itself, so restarting it is always safe: the bridge goes STOPPED
+# when the connection drops and waits for a fresh START from the page.
+Restart=on-failure
+RestartSec=3
+# Frame logs (one new file per run) go here.
+StateDirectory=vanguard-app
+StateDirectoryMode=0750
+UMask=0027
+
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+DevicePolicy=closed
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,39 @@
+# Install as /etc/systemd/system/vanguard-can-setup.service.
+# Root oneshot: configures both CAN interfaces (500 kbit/s, pack CAN2 listen-only) and
+# installs the tc egress filters, then verifies them. Interface names and the pack-bus
+# mapping come from /etc/vanguard-bridge/bridge.toml. The device units below name can0 and
+# can1 only because both must exist whatever the mapping is.
+[Unit]
+Description=Vanguard bridge: CAN interfaces, listen-only and tc egress filters
+Requires=sys-subsystem-net-devices-can0.device sys-subsystem-net-devices-can1.device
+After=sys-subsystem-net-devices-can0.device sys-subsystem-net-devices-can1.device systemd-modules-load.service
+Before=vanguard-bridge.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/vanguard-bridge/venv/bin/vanguard-bridge-netsetup --config /etc/vanguard-bridge/bridge.toml
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_NETLINK AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
