@@ -78,7 +78,6 @@ G 58 VDC DISP EN, H 58 VDC MAIN DC-DC, K OFF B CHGR WK UP, R GND HV, S/T master 
 U/V CAN main L/H, B(+)/B(-) studs. Only one CAN bus appears on the vehicle connector.
 
 Vehicle-side wiring reported by the owner [C as reported, not traced by the author]:
-* D (12 VDC aux) goes to a diode anode; the diode cathode goes to the DC-DC converter (direct current to direct current converter). D is therefore the pack's switched 12 V output (`12vout`) waking or enabling the converter, [I].
 * F (58 VDC MN EN) goes to the key switch input (KSI) of the motor control unit and to the instrument panel. F is an output from the pack to loads, not an input [I].
 * G (58 VDC DISP EN) goes to the Visage unit, Club Car's on-board display and fleet-management computer [I]. G is a feed to the display.
 * F, G and H are independently switched outputs, not taps behind the contactors: the Club Car diagnostic screen shows "Battery Output VCM Power: On" while "Battery Main Contactor State: Open" (Appendix C). They are the three outputs the host drives with `0x105` D0 bits 2, 4, 6 (motor control unit, vehicle control module, DC-DC converter power) [I, medium-high]. Bit-to-pin order is [?]; a meter on F, G, H while toggling each bit settles it (section 10).
@@ -554,7 +553,7 @@ Example frames (29-bit ID `0x0CFF00F3`, DLC 8):
 | RB13, RB14 | debounced inputs, only reported (CAN1 `0x113` B2 bits 0-1) | the diagnostic screen's "Key Switch Input" and "Charger Input", order unknown; vehicle pins C or T and K | [I] medium-high |
 | RB6 | wake pin in the sleep loop | unknown | [?] |
 | RA3, RA4, RD3 | aux outputs controlled by `0x105` D0 bits 6, 4, 2; shown on the diagnostic screen as "Battery Output MCU / VCM / DC-DC Power" | vehicle pins F, G, H in unknown order; board labels fatout / alout / fuout in unknown order | [I] medium-high / [?] order |
-| RC13, RC0, RD12 | "board on" outputs (12 V related) | 12vout = vehicle pin D, through a diode to the DC-DC converter | [I] medium-high |
+| RC13, RC0, RD12 | "board on" outputs (12 V related) | 12vout [?] | [I] medium-high |
 | RC9, RD13, RD7 | 3-bit board address strap (reported in `0x51D` B3) | internal | [C] |
 | RB8/RD11/RB15, RD0 | SPI1 to the MC33771B (clock, out, in, chip select) | | [C] |
 | RC2/RC7/RC8, RD9 | SPI2 to the external persistent memory | | [C] |
@@ -573,7 +572,7 @@ No CAN command reads or overrides RB11..RB14. Polarity of the connector inputs i
 2. **Which CAN is which.** Continuity from the vehicle "CAN main" pins to the board; confirm CAN1 is the vehicle bus.
 3. **Enable inputs.** Measure the active level of the board's `den`, `cen`, `estp`, `en12v` pins and map them to RB11..RB14 (section 8).
    Check continuity from vehicle pins C, K, S, T, F, G, H, D to the 15-pin connector, then measure C, S, T with the key off and on, and watch CAN1 `0x113` B2 bits 0-1 and CAN2 `0x0CF096F3` B6 when K is asserted.
-   Meter F, G, H while toggling `0x105` D0 bits 2, 4, 6 one at a time to learn which bit powers which output, and D with the pack awake and asleep.
+   Meter F, G, H while toggling `0x105` D0 bits 2, 4, 6 one at a time to learn which bit powers which output.
    Assert C, then T/S, then K one at a time and see which of `0x113` B2 bits 0-1 changes (key switch versus charger input).
 4. **Contactor identity.** Which of driver A and driver B is the connector's Prelay and which is srelay, and what path the precharge output switches (probably across contactor A).
 5. **Current sign and unit.** Compare `0x111` B0-B2 and CAN2 current against a clamp meter with a known load; confirm positive = charge and 1 mA/count.

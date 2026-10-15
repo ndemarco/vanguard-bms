@@ -84,11 +84,11 @@ Observations (INFERRED):
 - Only the 11-bit CAN bus (CAN11H/L) is connected. CANH/CANL (pins 4, 5) are unused by the vehicle.
 - CEN, RESET, FUOUT, FATOUT, 5V and both grounds (6, 14) are unconnected. The vehicle harness has no signal ground pin on this connector.
 - The jumper ties pin 11 (12V) to pin 13 (DEN and solenoid #2 coil), so DEN is held at the 12V level.
-- Owner reasoning: pin 11 is a 12 V supply input, because the contactors will not close without external 12 V and the pack has nothing that generates 12 V. The vehicle wiring above shows no wire on pin 11 other than the jumper, so the 12 V source must reach the pack through pin 3 (12VOUT) or pin 12 (EN12V), or the label direction on pin 3 is from the vehicle's side. Unresolved.
+- Pin 11 (12V) is not the contactor supply (owner correction, 2026-10-12). Its function is unknown.
 
 Comparison with the board list (INFERRED):
 - Every board label appears in the forum list (reset, en12v, den, can11h/l, canh/l, fuout, fatout, 12vout, gnd, estp, 5v, cen, alout). Labels agree, so the forum connector is probably the same signal set on a different connector.
-- The forum list adds a plain `12V` (pin 11, red) separate from `12VOUT` (pin 3), likely the 12 V supply input. The board list has no such label.
+- The forum list adds a plain `12V` (pin 11, red) separate from `12VOUT` (pin 3), function unknown. The board list has no such label.
 - Forum pin 13 ties DEN to the coil of solenoid #2, which would mean DEN is not a pure input. Unverified.
 - Forum lists two grounds (6, 14); the board list has `gnd` and `alout gnd`. The ALOUT return may be a ground pin.
 
@@ -97,6 +97,6 @@ A (blank); B signal ground; C key wake up; D 12 VDC aux; E (blank); F 58 VDC MN 
 J (blank); K OFF B CHGR WK UP (off-board charger wake up); L, M, N, P (blank); R GND HV; S master key return; T master key signal;
 U CAN main L; V CAN main H; plus B(+) and B(-) power studs.
 Owner note: these are some of the pins on the board connector described as mostly external with some internal functions.
-Owner wiring facts: D goes to a diode anode; the diode cathode goes to the DC-DC converter. F goes to the key switch input (KSI) of the motor control unit and to the instrument panel (no function label). G goes to the Visage unit (Club Car's on-board display and fleet-management computer).
-Hypothesis (revised after the Club Car diagnostic screen, see Appendix C of `CANBUS_PROTOCOL.md`): F, G, H are independently switched outputs (motor control unit, vehicle control module, DC-DC converter power), driven by `0x105` D0 bits 2, 4, 6, order unknown; D = `12vout`; the screen's "Key Switch Input" and "Charger Input" are the firmware's RB13 and RB14, probably vehicle pins C or T and K; which board labels (`en12v`, `den`, `estp`, `cen`) are RB11 and RB12 is unknown.
-INFERRED correspondences with board labels: gnd = B; en12v/key = C or T/S; 12vout = D; cen = K (charger wake) ; canh/canl = V/U (one bus only appears on this connector).
+Owner wiring facts: F goes to the key switch input (KSI) of the motor control unit and to the instrument panel (no function label). G goes to the Visage unit (Club Car's on-board display and fleet-management computer).
+Hypothesis (revised after the Club Car diagnostic screen, see Appendix C of `CANBUS_PROTOCOL.md`): F, G, H are independently switched outputs (motor control unit, vehicle control module, DC-DC converter power), driven by `0x105` D0 bits 2, 4, 6, order unknown; the screen's "Key Switch Input" and "Charger Input" are the firmware's RB13 and RB14, probably vehicle pins C or T and K; which board labels (`en12v`, `den`, `estp`, `cen`) are RB11 and RB12 is unknown.
+INFERRED correspondences with board labels: gnd = B; en12v/key = C or T/S; cen = K (charger wake) ; canh/canl = V/U (one bus only appears on this connector).
