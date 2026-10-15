@@ -28,7 +28,7 @@ Three connectors: module voltage lines labeled C0-C14, plus one NC (not connecte
 Cell monitor chip printed "MC3371BSP1" = NXP MC33771B (owner confirmed).
 
 ## Pack serial number format (owner report, 2026-10-11)
-The first pack's serial is 12 digits. The first six read as a YYMMDD date code (211229, that is 2021-12-29) [I]; the last six look like a sequence number and are withheld. A second pack's serial will be added for comparison.
+The first pack's serial is 12 digits. The first six read as a YYMMDD date code (211229, that is 2021-12-29) [I]; the last six look like a sequence number and are withheld. The BMS stores the serial in CAN1 `0x510` (bench-confirmed 2026-10-11): B5-B7 = 211229 as a u24, B0-B3 most likely the sequence number as a u32 [I, owner to confirm]; see CANBUS_PROTOCOL.md section 4.2. A second pack's serial will be added for comparison.
 
 ## Main power terminals (B+ / B-)
 Owner identified the pack's high-current terminals as Rebling 250 A LFT-style lithium battery terminals: https://www.rebling.com/products/lithium-battery-terminals/250-amp-lft-style-lithium-battery-terminal

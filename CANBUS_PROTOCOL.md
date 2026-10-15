@@ -152,7 +152,7 @@ A pack in sleep wakes on CAN1 activity only if SOC is above 4.9 % and the cells 
 | `0x113` | 100 ms | none | state/IO bits, balancing flag, model, SOH, SOC, temperature charge limit |
 | `0x114` | 100 ms | none | hottest/coolest sensor, max/min cell voltage |
 | `0x120` | 100 ms (+1 at sleep entry) | none | eight raw fault/status bytes |
-| `0x510` | 1000 ms | `0x105` D1 bit 0 | stored identity numbers |
+| `0x510` | 1000 ms | `0x105` D1 bit 0 | pack serial number (date code + sequence) |
 | `0x512` | 1000 ms | `0x105` D1 bit 0 | configured voltage limits |
 | `0x513` | 1000 ms | `0x105` D1 bit 0 | capacity, current ratings, temperature limits |
 | `0x517` | 1000 ms | none | trip charge counters (Ah) |
@@ -165,7 +165,7 @@ A pack in sleep wakes on CAN1 activity only if SOC is above 4.9 % and the cells 
 #### 0x111 (50 ms)
 | Bytes | Field | Decode | Conf |
 |---|---|---|---|
-| B0-B2 | Pack current | signed 24-bit two's complement, **1 mA/count**, positive = into the pack | format [C], unit and sign [I] |
+| B0-B2 | Pack current | signed 24-bit two's complement, **1 mA/count**, positive = into the pack | [C] format; unit and sign bench-confirmed 2026-10-11 (read +17.96 A while an 18 A bench supply charged the pack, Appendix D) |
 | B3-B4 | Discharge current limit | u16, 0.1 A/count | format [C], direction [I] |
 | B5-B6 | Charge current limit | u16, 0.1 A/count | format [C], direction [I] |
 | B7 | Counter | +1 per frame, wraps | [C] |
@@ -209,7 +209,7 @@ Any non-zero byte also sets `0x112` B0 bit 1.
 #### 0x510 / 0x512 / 0x513 / 0x51D (1000 ms, only while `0x105` D1 bit 0 was set)
 | ID | Bytes | Content | Conf |
 |---|---|---|---|
-| `0x510` | B0-B3, B4-B7 | stored identity numbers (u32 BE, u24 in B5-B7); set by CAN2 command `0xC6`. Bench read `00 04 AE 11 00 03 39 1D` | [C]/[I] role |
+| `0x510` | B0-B3, B4, B5-B7 | 12-digit pack serial, stored split: B5-B7 = u24 BE decimal date code YYMMDD (bench read `03 39 1D` = 211229, equals the first six digits of the pack label serial, bench-confirmed 2026-10-11); B0-B3 = u32 BE, most likely the remaining six digits (sequence number) [I, owner to confirm against the label]; B4 = 0. Written as `211229` + `<sequence, withheld>`; see analysis/hardware_connectors.md "Pack serial number format". Set by CAN2 command `0xC6` | [C] layout and date code; [I] sequence |
 | `0x512` | B0-B1, B2-B3, B4-B5, B6-B7 | low cell limit, high cell limit, low pack limit, high pack limit; u16, 10 mV/count. Model 0: 250, 425, 3500, 5880 (bench-confirmed 2026-10-11) | [C] |
 | `0x513` | B0 | capacity, whole Ah (73 for model 0; the pack reported 73 on the bench, 2026-10-11) | [C]/[I] unit |
 | | B1-B2, B3-B4 | two current ratings, 0.1 A/count (model 0: 1500, 2400 = 150 A, 240 A; bench-confirmed values 2026-10-11, role of each still [I]) | [C] values / [I] role |
@@ -577,7 +577,8 @@ No CAN command reads or overrides RB11..RB14. RB13 and RB14 assert when their pi
    Meter F, G, H while toggling `0x105` D0 bits 2, 4, 6 one at a time to learn which bit powers which output, and D with the pack awake and asleep.
    Assert C, then T/S, then K one at a time and see which of `0x113` B2 bits 0-1 changes (key switch versus charger input).
 4. **Contactor identity.** Which of driver A and driver B is the connector's Prelay and which is srelay, and what path the precharge output switches (probably across contactor A).
-5. **Current sign and unit.** Compare `0x111` B0-B2 and CAN2 current against a clamp meter with a known load; confirm positive = charge and 1 mA/count.
+5. **Current sign and unit.** Answered for CAN1, bench-confirmed 2026-10-11: `0x111` B0-B2 is 1 mA/count, positive = into the pack (+17.96 A while an 18 A bench supply charged the pack; owner confirmed the direction). CAN2 `0x0CF090F3` current uses the same stated convention (positive = charge) and is expected to match, not checked [I].
+16. **Delta-Q IC650 charger needs a CAN master.** Bench 2026-10-11: the Tempo-OEM IC650 speaks CANopen at 125 kbit/s as node 10 (heartbeat `0x70A`, state `0x7F` pre-operational, once per second when ACKed) and did not charge from pack voltage alone (contactors closed for 35 s, current 0). It needs a CAN master (the cart's VCM). Charger-side work lives in the separate `../deltaq-charger` repo.
 6. **Limit direction.** Confirm `0x111` B3-B4 is the discharge limit and B5-B6 the charge limit (change SOC or temperature and watch which moves).
 7. **Voltage ADC scale.** Partly answered: on the bench `0x112` B4-B5 matches the cell sum, B2-B3 read 50.5 V against 49.9 V and B6-B7 about 50 V after precharge, so the ADC scale is only approximate. The two high-voltage ADC channels (CAN2 `0x0CFF32F3` B2-B5, CAN1 `0x112` B2-B3, B6-B7) use a constant that has no writer in the image; compare with a meter.
 8. **Pin function of aux outputs** (`fatout`, `alout`, `fuout`) and what `0x105` D0 bits 2, 4, 6 do on the board.
@@ -643,6 +644,20 @@ Raspberry Pi with a Waveshare 2-CH CAN FD HAT; HAT can0 on the pack's 11-bit bus
 * **Latch.** `0x120` B2 bit 3 read 0x08 before the test and stayed 0x08 with `estp` and `en12v` tied; one clear-faults frame cleared it and it stayed 0.
 * **Bring-up.** One `0x105` D0 = 00, D1 = 0x13 (clear faults + enable), then D0 = 00, D1 = 0x11 every 100 ms for 6 s. `0x120` stayed all zero. Contactor driver B (`0x112` B1 bit 5) came on about 0.1 s after the clear, driver A (B0 bit 5) about 0.1 s later (documented B-then-A order). Output-side voltage (B6-B7) was about 49.8-50.0 V as A engaged; pack-side (B2-B3) about 50.5 V against a 49.9 V cell sum. When keep-alives stopped, the contactors opened within about 1 s and the keep-alive timeout fault latched (`0x120` B1 bit 2 = 0x04); the next start needs a clear-faults first.
 * **Known-good enable configuration** (not proof each part is needed): `estp` and `en12v` tied to B-, `den` at 12 V via the permanent jumper, `cen` and `alout` unconnected.
-* **Gated frames** (only while `0x105` D1 bit 0 is set): `0x510` = `00 04 AE 11 00 03 39 1D`; `0x512` = 250, 425, 3500, 5880 (2.50/4.25/35.00/58.80 V, matches model 0); `0x513` = `49 05DC 0960 05 14 6E` (73 Ah, 150 A, 240 A, B5 = 5, limits -20 C and +70 C); `0x51D` = `02 04 1F 28 1036 0960` (B0-B2 `02 04 1F`, not `02 09 07`; board address 0x28; charge target 4150 mV).
+* **Gated frames** (only while `0x105` D1 bit 0 is set): `0x510` = `xx xx xx xx 00 03 39 1D` (B0-B3 = serial sequence, withheld); `0x512` = 250, 425, 3500, 5880 (2.50/4.25/35.00/58.80 V, matches model 0); `0x513` = `49 05DC 0960 05 14 6E` (73 Ah, 150 A, 240 A, B5 = 5, limits -20 C and +70 C); `0x51D` = `02 04 1F 28 1036 0960` (B0-B2 `02 04 1F`, not `02 09 07`; board address 0x28; charge target 4150 mV).
 * **Capacity conflict** (nameplate 67.5 Ah, Club Car screen 54 Ah, pack reports 73 Ah) remains open.
 * **Transmit errors.** The controller went error-passive once during the 6 s of transmitting (TX error counter 67 at the end, RX errors 0); not diagnosed (open question 15).
+* **Bench-supply charge** (pack 1). Pack put in charge mode via the bridge (`0x105` D0 = 0x01, D1 = 0x11), then charged from a Riden RD6018 bench supply set to 57.40 V / 18 A. The BMS accepted bench-supply current with no CAN charger present. Readings during the charge:
+| Item | Value |
+|---|---|
+| Current (`0x111` B0-B2) | +17.96 A (power going into the pack): sign and 1 mA/count confirmed, owner confirmed the sign |
+| Pack voltage (`0x112` B4-B5) | 51.66 V; output side 51.85 V |
+| Cells | 3.683-3.696 V (13 mV spread) |
+| Temperatures | 26-27 C |
+| Faults | none |
+| `0x113` B0 | bit 0 = 1 (charge mode) |
+| `0x113` B2 | 0x0B (bits 0, 1 inputs asserted; bit 3 closing/closed) |
+| `0x113` B6 | 0x3E = 31 % SOC |
+| `0x113` B7 | 0x25 = 37 A temperature charge limit; matches the documented 36 A max for variant 0 within one count |
+* **Pack serial in `0x510`.** B5-B7 `03 39 1D` = 211229 = the first six digits of the pack label serial (date code 2021-12-29); B0-B3 most likely the remaining six digits (sequence) [I, owner to confirm]; B4 = 0. Recorded here as `211229` + `<sequence, withheld>`.
+* **Delta-Q IC650 charger** (Tempo OEM). Speaks CANopen at 125 kbit/s as node 10: heartbeat `0x70A` with state `0x7F` (pre-operational), once per second when ACKed. It did not charge from pack voltage alone (contactors closed for 35 s, current 0); it needs a CAN master (the cart's VCM). See the separate `../deltaq-charger` repo and open question 16.
