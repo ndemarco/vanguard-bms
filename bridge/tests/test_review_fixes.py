@@ -77,7 +77,7 @@ def test_wrong_id_format_latches_and_refuses_start(rig, bus, eff):
     rig.advance(2_000_000, client=c, hb_every=100_000)
     lines = rig.read(c)
     assert any("bus format mismatch" in ln and ln.startswith("S STOP") for ln in lines)
-    assert any(ln.startswith("S ERR START refused: bus format mismatch") for ln in lines)
+    assert any(ln.startswith("S ERR START DISCHARGE refused: wiring latch") for ln in lines)
     assert rig.svc.bridge.state == STOPPED
     assert not [ln for ln in lines if ln.startswith("T ") and int(ln.split()[5]) > rig.clock.t - 2_000_000]
     c.close()

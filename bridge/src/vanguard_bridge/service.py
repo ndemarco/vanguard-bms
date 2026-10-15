@@ -64,6 +64,11 @@ def wiring_swap_evidence(bus: int, f: RxFrame) -> Optional[str]:
     return None
 
 
+def is_pack_can1_evidence(bus: int, f: RxFrame) -> bool:
+    """A frame the pack sends on CAN1, received on the pack CAN1 (TX) interface."""
+    return bus == 1 and not (f.err or f.rtr or f.eff) and f.can_id in PACK_CAN1_TX_IDS
+
+
 def monotonic_us() -> int:
     return time.monotonic_ns() // 1000
 
@@ -274,19 +279,22 @@ class Service:
                 self.bridge.status(f"SIM {self.sim_status.popleft()}")
         if self.listener in readable:
             self._accept()
-        if self.client is not None and self.client in readable:
-            self._read_client()
         for rcv in self.receivers:
             for f in rcv.read_frames():
                 swap = wiring_swap_evidence(rcv.bus, f)
                 if swap is not None:
                     self.bridge.latch_wiring_fault(swap)
+                elif is_pack_can1_evidence(rcv.bus, f):
+                    self.bridge.note_pack_can1_frame(self.clock())
                 if f.err or f.rtr:
                     self.bridge.status(f"RX {rcv.bus} {describe(f)}")
                 else:
                     self.bridge.received(rcv.bus, f.can_id, f.data, self.clock())
             if rcv.dead is not None and self.running:
                 self._fail(f"pack CAN{rcv.bus} socket error: {rcv.dead}")
+        # Client input after the receivers, so START sees this step's bus evidence.
+        if self.client is not None and self.client in readable and self.running:
+            self._read_client()
         self.bridge.tick(self.clock())
         if self.bridge.fatal is not None and self.running:
             self._fail(self.bridge.fatal)

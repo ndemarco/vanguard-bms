@@ -33,6 +33,7 @@ WATCHDOG_US = 1_000_000
 CLEAR_MIN_INTERVAL_US = 100_000
 SLEEP_MIN_INTERVAL_US = 1_000_000
 SLEEP_AFTER_KEEPALIVE_US = 1_500_000  # owner policy: contactors must already be open
+PACK_EVIDENCE_US = 250_000  # START/SLEEP need a pack CAN1 frame on the TX interface this recently
 STATE_REPORT_US = 1_000_000
 MAX_LINE_BYTES = 64
 
@@ -60,6 +61,7 @@ class Bridge:
         self.last_sleep_us: Optional[int] = None
         self.last_keepalive_sent_us: Optional[int] = None
         self.wiring_fault: Optional[str] = None  # latched until the next client connects
+        self.pack_can1_seen_us: Optional[int] = None  # last pack-sent CAN1 frame on the TX interface
         self.fatal: Optional[str] = None  # set when the process must exit (service checks it)
         self.client_connected = False
         self.next_state_report_us = 0
@@ -124,6 +126,18 @@ class Bridge:
         self.status(f"TXERROR {reason}")
         self.force_stop("transmit failed; bridge exits so the CAN queue is flushed")
 
+    def note_pack_can1_frame(self, now_us: int) -> None:
+        """The CAN1 (TX) interface received a standard frame from the pack's CAN1 transmit set."""
+        self.pack_can1_seen_us = now_us
+
+    def _transmit_permission(self, now: int) -> Optional[str]:
+        """Positive evidence that the TX interface is wired to pack CAN1; None if START/SLEEP may send."""
+        if self.wiring_fault is not None:
+            return f"wiring latch ({self.wiring_fault})"
+        if self.pack_can1_seen_us is None or now - self.pack_can1_seen_us > PACK_EVIDENCE_US:
+            return "no pack CAN1 traffic seen in the last 250 ms"
+        return None
+
     def latch_wiring_fault(self, reason: str) -> None:
         """A pack frame arrived on the wrong interface: refuse START until a new client connects."""
         if self.wiring_fault is None:
@@ -185,8 +199,9 @@ class Bridge:
         if self.fatal is not None:
             self.status(f"ERR START refused: bridge is exiting ({self.fatal})")
             return
-        if self.wiring_fault is not None:
-            self.status(f"ERR START refused: bus format mismatch latched ({self.wiring_fault}); restart the bridge")
+        why = self._transmit_permission(now)
+        if why is not None:
+            self.status(f"ERR START {mode} refused: {why}")
             return
         if now - arrival >= WATCHDOG_US:
             self.status(f"ERR START {mode} refused: stale (waited 1 s or more in the bridge)")
@@ -221,8 +236,9 @@ class Bridge:
         if self.fatal is not None:
             self.status(f"ERR {line} refused: bridge is exiting ({self.fatal})")
             return
-        if self.wiring_fault is not None:
-            self.status(f"ERR {line} refused: bus format mismatch latched; restart the bridge")
+        why = self._transmit_permission(now)
+        if why is not None:
+            self.status(f"ERR {line} refused: {why}")
             return
         if self.state != STOPPED:
             self.status(f"ERR {line} refused: only allowed while STOPPED")

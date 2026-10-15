@@ -24,6 +24,7 @@ pack is connected.
 | Client disconnect, slow client, internal error, SIGTERM: STOPPED | `core.py` `Bridge.disconnect`, `Bridge._fail_closed`; `service.py` `Service._drop_client`, `Service.run` |
 | `CLEAR` once per 100 ms, single-shot D1 = 0x13 | `core.py` `Bridge._clear`, `Bridge._tick` |
 | `SLEEP 1` / `SLEEP 3` only while STOPPED | `core.py` `Bridge._sleep` |
+| `START` and `SLEEP` need positive evidence: a pack CAN1 frame on the TX interface within 250 ms and no wiring latch | `core.py` `Bridge._transmit_permission`, `Bridge.note_pack_can1_frame`; `service.py` `is_pack_can1_evidence`, `Service.step` (receivers are read before client input) |
 | OS layer: pack CAN1 egress filter (only 0x105 and 0x515), pack CAN2 listen-only plus drop-all filter | `netsetup.py` `commands` |
 | Bridge refuses to start (exit 2), or stops and exits (exit 3) while running, without those guards; the periodic check runs in a thread | `netcheck.py` `check_all`; `service.py` `main`, `BackgroundChecker`, `Service.step` |
 | No GPIO: the hardware enable input is not driven | no GPIO code exists |
@@ -56,13 +57,13 @@ and reported once. Bytes outside 0x20..0x7E are rejected.
 
 | Line | Accepted when | Effect |
 |---|---|---|
-| `START DISCHARGE` / `START CHARGE` | STOPPED | enter RUNNING; first `0x105` at once, then every 100 ms; D0 = `0x00` (discharge) or `0x01` (charge), D1 = `0x11`. Feeds the watchdog |
+| `START DISCHARGE` / `START CHARGE` | STOPPED, pack CAN1 traffic seen (see below) | enter RUNNING; first `0x105` at once, then every 100 ms; D0 = `0x00` (discharge) or `0x01` (charge), D1 = `0x11`. Feeds the watchdog |
 | same `START` again | RUNNING in that mode | feeds the watchdog |
 | `START` of the other mode | RUNNING | refused (`STOP` first) |
 | `HB` | any time | feeds the watchdog while RUNNING; no reply |
 | `STOP` | any time | enter STOPPED; `S OK STOP` |
 | `CLEAR` | RUNNING, at least 100 ms after the last accepted `CLEAR` | next `0x105` carries D1 = `0x13`, then back to `0x11` |
-| `SLEEP 1` / `SLEEP 3` | STOPPED, at least 1.5 s after the last `0x105` was sent, at most once per second | one `0x515` with D0 = `0x10` / `0x30` |
+| `SLEEP 1` / `SLEEP 3` | STOPPED, pack CAN1 traffic seen, at least 1.5 s after the last `0x105` was sent, at most once per second | one `0x515` with D0 = `0x10` / `0x30` |
 
 Anything else, including `SLEEP 2`, gets `S ERR ...` and changes nothing. Errors and
 refused commands never feed the watchdog.
@@ -146,6 +147,19 @@ Either means the wiring does not match the config: the bridge enters STOPPED and
 `START` until a new client connects. Remote frames and other nodes' frames are ignored. A
 real swap trips again within about 50 ms of reconnecting, because the pack sends those frames
 every 50 to 100 ms.
+
+Clearing the latch is safe because `START` and `SLEEP` also need positive evidence: within
+the last 250 ms the pack CAN1 interface must have received a standard frame whose ID is in
+the pack's CAN1 transmit list (`0x111`, `0x112`, ... from `vanguard.frames`), and no wiring
+latch may be set. Otherwise they are refused with
+`S ERR START ... refused: no pack CAN1 traffic seen in the last 250 ms` or
+`S ERR START ... refused: wiring latch (...)`. Each step reads the CAN sockets before the
+client's input, so this step's frames count. This also covers the first moments after the
+bridge starts, before any frame has been read.
+
+Consequence: the bridge cannot wake a pack that is asleep and silent on CAN1, because it
+will not send the first `0x105` without seeing pack traffic. Wake the pack by its hardware
+input (key switch or charger wake-up line) first; once it broadcasts on CAN1, `START` works.
 
 * `"listen-only"` (active): the CAN2 controller never transmits and never ACKs.
 * `"tc-drop-all"` (fallback, commented out): normal mode, so the controller ACKs pack frames;

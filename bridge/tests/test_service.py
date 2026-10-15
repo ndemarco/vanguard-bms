@@ -25,11 +25,11 @@ class Clock:
 
 
 class Rig:
-    def __init__(self, tmpdir):
+    def __init__(self, tmpdir, link_cls=SimLink):
         self.clock = Clock()
         self.path = os.path.join(tmpdir, "b.sock")
         self.listener = make_listener(self.path, 0o660, None)
-        self.link = SimLink(self.clock)
+        self.link = link_cls(self.clock)
         w = SimCan1Socket(self.link)
         self.svc = Service(listener=self.listener, can1_writer=w,
                            receivers=[CanReceiver(1, w), Can2ReceiveOnly(SimCan2Socket(self.link))],
@@ -37,7 +37,9 @@ class Rig:
                            pump=self.link.pump, sim_status=self.link.status)
         self.buf = b""
 
-    def connect(self):
+    def connect(self, prime=True):
+        if prime:  # let the simulated pack send some CAN1 frames first
+            self.advance(100_000)
         c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         c.connect(self.path)
         c.setblocking(False)

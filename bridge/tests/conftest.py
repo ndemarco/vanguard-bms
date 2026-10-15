@@ -29,7 +29,8 @@ class FakeWriter:
 class Harness:
     """Bridge + fake writer + fake clock (microseconds). No wall-clock time anywhere."""
 
-    def __init__(self):
+    def __init__(self, pack_alive=True):
+        self.pack_alive = pack_alive  # feed pack CAN1 evidence (the 0x111 the pack sends every 50 ms)
         self.now = 1_000_000_000  # arbitrary monotonic origin
         self.t0 = self.now
         self.writer = FakeWriter(lambda: self.now - self.t0)
@@ -39,6 +40,8 @@ class Harness:
         self.bridge.connect(self.now)
 
     def cmd(self, line):
+        if self.pack_alive:
+            self.bridge.note_pack_can1_frame(self.now)
         self.bridge.handle_line(line, self.now)
 
     def run(self, until_us, step_us=1_000, every=None):
