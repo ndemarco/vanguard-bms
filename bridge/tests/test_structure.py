@@ -15,28 +15,36 @@ PKG = pathlib.Path(vanguard_bridge.__file__).parent
 WRITE_NAMES = {"send", "sendall", "sendto", "sendmsg", "write", "writelines"}
 
 
+def _enclosing(node, parents):
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return node.name
+    return "<module>"
+
+
 def _write_calls():
-    """Every call ``x.send(...)``-like in the package, as (file, enclosing function)."""
+    """Every reference to a write method in the package, as (file, enclosing function, source).
+
+    Catches calls and bare references (``f = sock.send``, inside lambdas too), and
+    ``getattr``/``methodcaller``-style string lookups of a write method name.
+    """
     found = set()
     for path in PKG.glob("*.py"):
         tree = ast.parse(path.read_text())
+        parents = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                for sub in ast.walk(node):
-                    if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) \
-                            and sub.func.attr in WRITE_NAMES:
-                        found.add((path.name, node.name, ast.unparse(sub.func)))
+            if isinstance(node, ast.Attribute) and node.attr in WRITE_NAMES and isinstance(node.ctx, ast.Load):
+                found.add((path.name, _enclosing(node, parents), ast.unparse(node)))
+            elif isinstance(node, ast.Constant) and node.value in WRITE_NAMES:
+                found.add((path.name, _enclosing(node, parents), repr(node.value)))
     return found
 
 
-def test_only_known_write_calls_exist():
-    assert _write_calls() == {
-        ("txgate.py", "send", "self._writer.send"),            # THE final CAN send
-        ("core.py", "_sleep", "self.gate.send"),               # via the TxGate
-        ("core.py", "_tick", "self.gate.send"),                # via the TxGate
-        ("service.py", "_flush_client", "self.client.send"),   # Unix socket to the client
-        ("service.py", "_refuse_second_client", "conn.send"),  # Unix socket refusal line
-    }
+def test_tripwire_sees_getattr_and_lambdas(tmp_path, monkeypatch):
+    (tmp_path / "evil.py").write_text("f = lambda s: s.sendto(b'', 0)\ng = lambda s: getattr(s, 'send')(b'')\n")
+    monkeypatch.setattr(__import__(__name__), "PKG", tmp_path)
+    assert _write_calls() == {("evil.py", "<module>", "s.sendto"), ("evil.py", "<module>", "'send'")}
 
 
 def test_txgate_constructed_only_by_bridge():

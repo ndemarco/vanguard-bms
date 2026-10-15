@@ -104,7 +104,7 @@ def test_end_to_end_contactors_close_then_open_after_host_silence(rig):
     assert rig.link.sim.contactors_closed
     assert contactor_bits(lines)[-1] is True
     t_lines = [parse_line(ln) for ln in lines if ln.startswith("T ")]
-    assert len(t_lines) == 30 and all(f.can_id == 0x105 for f in t_lines)
+    assert len(t_lines) == 31 and all(f.can_id == 0x105 for f in t_lines)
     assert any(ln.startswith("R 2 ") for ln in lines)  # CAN2 telemetry arrives too
 
     # Host goes silent: bridge stops at 1 s, pack opens about 1 s after the last keep-alive.
@@ -180,12 +180,17 @@ def test_slow_client_is_dropped_and_bridge_stops(rig, monkeypatch):
 
 
 def test_recheck_failure_stops_and_exits(rig):
-    rig.svc.recheck = lambda: ["pack CAN1: can0: listen-only is on"]
+    results = []
+    rig.svc.recheck_poll = lambda: results.pop(0) if results else None
     c = rig.connect()
     c.sendall(b"START DISCHARGE\n")
     rig.svc.step(0)
     assert rig.svc.bridge.state == RUNNING
-    rig.advance(6_000_000, client=c, hb_every=250_000)
+    results += [[], None, []]
+    rig.advance(1_000_000, client=c, hb_every=250_000)
+    assert rig.svc.bridge.state == RUNNING
+    results.append(["pack CAN1: can0: listen-only is on"])
+    rig.svc.step(0)
     assert rig.svc.bridge.state == STOPPED and rig.svc.running is False and rig.svc.exit_code == 3
     c.close()
 

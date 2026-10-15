@@ -6,10 +6,12 @@ frames from both buses go back as ``R`` lines, frames the bridge sent as ``T``
 lines, status as ``S`` lines.
 
 Fail-closed paths handled here: client disconnect, client too slow to read its
-output (buffer above :data:`MAX_OUTBUF`), interface check failing while running
-(the bridge stops and exits with status 3), SIGTERM/SIGINT, and any exception
-escaping the loop (the process exits; the pack opens its contactors about 1 s
-after the last keep-alive).
+output (buffer above :data:`MAX_OUTBUF`), a frame of the wrong ID format on a bus
+(wiring swapped: STOPPED, START refused until restart), and, with exit status 3, a
+CAN transmit error, a CAN socket error or a failed background interface check;
+SIGTERM/SIGINT; any exception escaping the loop (the process exits; the pack opens
+its contactors about 1 s after the last keep-alive). systemd re-runs the interface
+setup before every start, which flushes frames still queued for transmit.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import signal
 import socket
 import stat
 import sys
+import threading
 import time
 from dataclasses import replace
 from typing import Callable, Optional
@@ -30,31 +33,79 @@ from vanguard.wire import format_status
 
 from . import config as config_mod
 from .canio import Can2ReceiveOnly, CanReceiver, describe, open_pack_can1, open_pack_can2
-from .core import Bridge, LineAssembler
+from .core import WATCHDOG_US, Bridge, LineAssembler
 from .netcheck import check_all
 from .simlink import SimCan1Socket, SimCan2Socket, SimLink
 
 MAX_OUTBUF = 256 * 1024
 READ_CHUNK = 4096
+MAX_CLIENT_READ_PER_STEP = 64 * 1024
 
 
 def monotonic_us() -> int:
     return time.monotonic_ns() // 1000
 
 
+class BackgroundChecker:
+    """Runs the interface checks in a thread so ``ip``/``tc`` never stall the event loop.
+
+    The loop only calls :meth:`poll`. A check that has not completed for
+    ``3 * interval + 5 s`` (hung subprocess, dead thread) is reported as a failure.
+    """
+
+    def __init__(self, checker: Callable[[], list], interval_s: float, clock_s: Callable[[], float] = time.monotonic):
+        self.checker = checker
+        self.interval_s = interval_s
+        self.clock_s = clock_s
+        self.max_age_s = 3 * interval_s + 5
+        self._lock = threading.Lock()
+        self._result: Optional[list] = None
+        self._last_done = clock_s()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="vanguard-netcheck", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def run_once(self) -> None:
+        try:
+            errs = list(self.checker())
+        except Exception as e:  # a crashing check is a failing check
+            errs = [f"interface check raised {type(e).__name__}: {e}"]
+        with self._lock:
+            self._result = errs
+            self._last_done = self.clock_s()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval_s):
+            self.run_once()
+
+    def poll(self) -> Optional[list]:
+        """Problems from the latest completed check (once), [] if it passed, None if nothing new."""
+        with self._lock:
+            r, self._result = self._result, None
+            stale = self.clock_s() - self._last_done > self.max_age_s
+        if stale:
+            return [f"interface check has not completed for more than {self.max_age_s:.0f} s"]
+        return r
+
+
 class Service:
     def __init__(self, *, listener: socket.socket, can1_writer, receivers: list, clock_us: Callable[[], int],
-                 log: Callable[[str], None], info_lines: list, recheck: Optional[Callable[[], list]] = None,
-                 recheck_interval_us: int = 5_000_000, pump: Optional[Callable[[], None]] = None,
-                 sim_status=None, max_wait_s: float = 0.2):
+                 log: Callable[[str], None], info_lines: list,
+                 recheck_poll: Optional[Callable[[], Optional[list]]] = None,
+                 pump: Optional[Callable[[], None]] = None, sim_status=None, max_wait_s: float = 0.2):
         self.listener = listener
         self.receivers = receivers
         self.clock = clock_us
         self.log = log
         self.info_lines = list(info_lines)
-        self.recheck = recheck
-        self.recheck_interval_us = recheck_interval_us
-        self.next_recheck_us = clock_us() + recheck_interval_us
+        self.recheck_poll = recheck_poll
+        # Lower bound on the arrival time of client bytes not yet read (see _read_client).
+        self.client_since_us = clock_us()
         self.pump = pump
         self.sim_status = sim_status
         self.max_wait_s = max_wait_s
@@ -85,6 +136,7 @@ class Service:
             return
         conn.setblocking(False)
         self.client = conn
+        self.client_since_us = self.clock()
         self.assembler = LineAssembler()
         self.outbuf.clear()
         self.overflow = False
@@ -116,23 +168,42 @@ class Service:
         self.bridge.disconnect(self.clock())
 
     def _read_client(self) -> None:
-        try:
-            data = self.client.recv(READ_CHUNK)
-        except (BlockingIOError, InterruptedError):
-            return
-        except OSError as e:
-            data = b""
-            self.log(f"client read error: {e}")
-        if not data:
-            self._drop_client("disconnected")
-            return
-        for line, err in self.assembler.feed(data):
+        """Drain the client socket and run its lines.
+
+        Commands are stamped with ``client_since_us``, a time no later than their real
+        arrival (the moment the socket was last seen empty). So if the loop stalls,
+        ``HB`` lines that sat in the socket meanwhile cannot move the watchdog past
+        1 s of real client silence, and a ``START`` that is already 1 s old is refused.
+        """
+        stamp = self.client_since_us
+        data = bytearray()
+        eof = False
+        while len(data) < MAX_CLIENT_READ_PER_STEP:
+            t_try = self.clock()
+            try:
+                chunk = self.client.recv(READ_CHUNK)
+            except (BlockingIOError, InterruptedError):
+                self.client_since_us = t_try  # empty at t_try: later bytes arrive after it
+                break
+            except OSError as e:
+                self.log(f"client read error: {e}")
+                chunk = b""
+            if not chunk:
+                eof = True
+                break
+            data += chunk
+        # If the per-step cap was hit, client_since_us stays: the rest may be older.
+        for line, err in self.assembler.feed(bytes(data)):
             if self.client is None:
                 return
             if err is not None:
                 self.bridge.status(err)
+            elif line.startswith("START ") and self.clock() - stamp >= WATCHDOG_US:
+                self.bridge.status(f"ERR {line} refused: stale (waited 1 s or more in the bridge)")
             else:
-                self.bridge.handle_line(line, self.clock())
+                self.bridge.handle_line(line, stamp)
+        if eof:
+            self._drop_client("disconnected")
 
     def _flush_client(self) -> None:
         if self.client is None or not self.outbuf:
@@ -147,6 +218,13 @@ class Service:
 
     # -------------------------------------------------------------- loop
 
+    def _fail(self, reason: str) -> None:
+        """Stop and end the loop with exit status 3 (systemd restarts; ExecStartPre resets the CAN interfaces)."""
+        self.log(f"FATAL {reason}")
+        self.bridge.force_stop(reason)
+        self.exit_code = 3
+        self.running = False
+
     def step(self, max_wait_s: Optional[float] = None) -> None:
         wait = self.max_wait_s if max_wait_s is None else max_wait_s
         now = self.clock()
@@ -156,10 +234,14 @@ class Service:
             rl.append(self.client)
         rl += [r for r in self.receivers if r.fileno() is not None]
         wl = [self.client] if self.client is not None and self.outbuf else []
+        t_select = self.clock()
         try:
             readable, _, _ = select.select(rl, wl, [], timeout)
         except InterruptedError:
             readable = []
+        if self.client is not None and self.client not in readable:
+            self.client_since_us = t_select  # no client bytes were waiting at t_select
+        self.bridge.tick(self.clock())  # watchdog first, before any buffered input is read
         if self.pump is not None:
             self.pump()
             while self.sim_status:
@@ -170,20 +252,25 @@ class Service:
             self._read_client()
         for rcv in self.receivers:
             for f in rcv.read_frames():
+                if not f.err and f.eff != (rcv.bus == 2):
+                    # Pack CAN1 uses only 11-bit IDs, pack CAN2 only 29-bit IDs.
+                    kind = "29-bit" if f.eff else "11-bit"
+                    self.bridge.latch_wiring_fault(f"{kind} ID {f.can_id:#x} on pack CAN{rcv.bus}")
                 if f.err or f.rtr:
                     self.bridge.status(f"RX {rcv.bus} {describe(f)}")
                 else:
                     self.bridge.received(rcv.bus, f.can_id, f.data, self.clock())
+            if rcv.dead is not None and self.running:
+                self._fail(f"pack CAN{rcv.bus} socket error: {rcv.dead}")
         self.bridge.tick(self.clock())
-        if self.recheck is not None and self.clock() >= self.next_recheck_us:
-            self.next_recheck_us = self.clock() + self.recheck_interval_us
-            errs = self.recheck()
+        if self.bridge.fatal is not None and self.running:
+            self._fail(self.bridge.fatal)
+        if self.recheck_poll is not None and self.running:
+            errs = self.recheck_poll()
             if errs:
                 for e in errs:
                     self.log(f"CHECK FAILED: {e}")
-                self.bridge.force_stop(f"interface check failed: {errs[0]}")
-                self.exit_code = 3
-                self.running = False
+                self._fail(f"interface check failed: {errs[0]}")
         if self.overflow:
             self._drop_client("client is not reading its output")
         self._flush_client()
@@ -265,7 +352,9 @@ def main(argv: Optional[list] = None, *, checker=check_all) -> int:
     else:
         can1_writer, rx1 = open_pack_can1(cfg.can1_interface)
         receivers = [rx1, open_pack_can2(cfg.can2_interface)]
-        extra = dict(recheck=lambda: checker(cfg), recheck_interval_us=int(cfg.recheck_interval_s * 1e6))
+        bg = BackgroundChecker(lambda: checker(cfg), cfg.recheck_interval_s)
+        bg.start()
+        extra = dict(recheck_poll=bg.poll)
 
     listener = make_listener(cfg.socket_path, cfg.socket_mode, cfg.socket_group)
     _log(f"listening on {cfg.socket_path}; state STOPPED")

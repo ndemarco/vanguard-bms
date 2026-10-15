@@ -33,12 +33,17 @@ Runner = Callable[[list], tuple]  # argv -> (returncode, combined output)
 SysfsResolver = Callable[[str], Optional[str]]  # ifname -> SPI device name or None
 
 CAN1_ALLOWED_IDS = frozenset({("sff", 0x105), ("sff", 0x515)})
+CMD_TIMEOUT_S = 0.5
 _CMD_ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"}
 
 
-def run_cmd(argv: list) -> tuple:
+def _one_line(text: str) -> str:
+    return " ".join(text.split())
+
+
+def run_cmd(argv: list, timeout_s: float = CMD_TIMEOUT_S) -> tuple:
     try:
-        p = subprocess.run(argv, capture_output=True, text=True, timeout=2, env=_CMD_ENV, check=False)
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s, env=_CMD_ENV, check=False)
     except (OSError, subprocess.TimeoutExpired) as e:
         return 127, f"{type(e).__name__}: {e}"
     return p.returncode, p.stdout + p.stderr
@@ -86,6 +91,9 @@ def parse_ip_details(text: str) -> Optional[LinkInfo]:
     return info
 
 
+BAD_CAN1_STATES = frozenset({"BUS-OFF", "STOPPED", "SLEEPING"})
+
+
 def check_link(text: str, ifname: str, *, want_listen_only: bool) -> list:
     info = parse_ip_details(text)
     if info is None:
@@ -104,8 +112,15 @@ def check_link(text: str, ifname: str, *, want_listen_only: bool) -> list:
         errs.append(f"{ifname}: listen-only mode is not on")
     if not want_listen_only and lo:
         errs.append(f"{ifname}: listen-only is on but this is the transmit bus (pack CAN1); mapping swapped?")
-    if not want_listen_only and "LOOPBACK" in info.ctrlmodes:
-        errs.append(f"{ifname}: loopback mode is on")
+    if not want_listen_only:  # pack CAN1, the transmit bus
+        if "LOOPBACK" in info.ctrlmodes:
+            errs.append(f"{ifname}: loopback mode is on")
+        if "LOWER_UP" not in info.flags:
+            errs.append(f"{ifname}: no LOWER_UP (controller not running)")
+        if not info.can_state:
+            errs.append(f"{ifname}: CAN state not reported")
+        elif info.can_state in BAD_CAN1_STATES:
+            errs.append(f"{ifname}: CAN state is {info.can_state}")
     return errs
 
 
@@ -126,6 +141,14 @@ class TcFilter:
     kind: str
     header_rest: str
     body: list
+
+    @property
+    def chain(self) -> Optional[int]:
+        """Chain number; 0 when iproute2 prints no chain word. None if unparseable."""
+        m = re.search(r"\bchain\s+(\S+)", self.header_rest)
+        if not m:
+            return 0
+        return int(m.group(1)) if m.group(1).isdigit() else None
 
 
 def parse_tc_filters(text: str) -> list:
@@ -169,6 +192,8 @@ def _single_drop_filter(text: str, ifname: str) -> tuple:
         return None, [f"{ifname}: expected exactly one tc filter under 1:, found {len(filters)}"]
     f = filters[0]
     errs = []
+    if f.chain != 0:
+        errs.append(f"{ifname}: filter is not in chain 0")
     if f.kind != "basic":
         errs.append(f"{ifname}: filter kind {f.kind!r} is not 'basic'")
     if f.protocol != "all":
@@ -227,11 +252,11 @@ def check_all(cfg: Config, run: Runner = run_cmd, spi_of: SysfsResolver = spi_de
             errs.append(f"pack CAN{bus}: {ifname} is on SPI device {actual!r}, config says {spi!r}")
         rc, out = run(["ip", "-details", "link", "show", "dev", ifname])
         errs += [f"pack CAN{bus}: {e}" for e in
-                 (check_link(out, ifname, want_listen_only=listen_only) if rc == 0 else [f"{ifname}: ip failed: {out.strip()}"])]
+                 (check_link(out, ifname, want_listen_only=listen_only) if rc == 0 else [f"{ifname}: ip failed: {_one_line(out)}"])]
         rc, out = run(["tc", "qdisc", "show", "dev", ifname])
         errs += [f"pack CAN{bus}: {e}" for e in
-                 (check_qdisc(out, ifname) if rc == 0 else [f"{ifname}: tc qdisc failed: {out.strip()}"])]
+                 (check_qdisc(out, ifname) if rc == 0 else [f"{ifname}: tc qdisc failed: {_one_line(out)}"])]
         rc, out = run(["tc", "filter", "show", "dev", ifname, "parent", "1:"])
         errs += [f"pack CAN{bus}: {e}" for e in
-                 (check_filter(out, ifname) if rc == 0 else [f"{ifname}: tc filter failed: {out.strip()}"])]
+                 (check_filter(out, ifname) if rc == 0 else [f"{ifname}: tc filter failed: {_one_line(out)}"])]
     return errs
