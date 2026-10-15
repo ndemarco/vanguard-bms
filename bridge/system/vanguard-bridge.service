@@ -1,0 +1,49 @@
+# Install as /etc/systemd/system/vanguard-bridge.service.
+# Unprivileged: CAN_RAW sockets and the read-only `ip`/`tc show` checks need no capabilities.
+# The bridge starts STOPPED and transmits nothing until its client sends START.
+[Unit]
+Description=Vanguard battery bridge (CAN keep-alive, client socket)
+Requires=vanguard-can-setup.service
+After=vanguard-can-setup.service
+
+[Service]
+Type=simple
+User=vanguard-bridge
+Group=vanguard
+ExecStart=/opt/vanguard-bridge/venv/bin/vanguard-bridge --config /etc/vanguard-bridge/bridge.toml
+# Exit 2 = startup refusal (guards missing): do not retry in a loop.
+Restart=on-failure
+RestartSec=2
+RestartPreventExitStatus=2
+RuntimeDirectory=vanguard-bridge
+RuntimeDirectoryMode=0750
+UMask=0007
+
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+DevicePolicy=closed
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_CAN AF_NETLINK
+IPAddressDeny=any
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
