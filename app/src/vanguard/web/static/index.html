@@ -8,23 +8,69 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<div id="commsbar" class="commsbar" role="alert" hidden></div>
 <header>
-  <h1>Vanguard pack</h1>
-  <div id="statusline" class="statusline" aria-live="polite"></div>
+  <div class="hdr">
+    <h1>Vanguard pack</h1>
+    <label class="showall"><input type="checkbox" id="show-all"> Show all signals (including not received)</label>
+  </div>
+  <div id="statusline" class="statusline muted"></div>
 </header>
 <div id="banners"></div>
 
 <main>
+<section id="topstatus" class="panel topstatus" aria-label="Pack status summary">
+  <div class="ts-grid">
+    <div class="ts-cell" id="ts-contactors-cell">
+      <div class="ts-label">Contactors</div>
+      <div id="ts-contactors" class="ts-big" role="status" aria-live="polite">UNKNOWN</div>
+      <div id="ts-contactors-note" class="ts-note"></div>
+      <div id="ts-contactors-note2" class="ts-note ts-warnnote"></div>
+      <div class="ts-stop"><button type="button" id="btn-stop" class="stop">Stop</button></div>
+      <div class="reply" id="reply-STOP" aria-live="polite" hidden></div>
+    </div>
+    <div class="ts-cell" id="ts-session-cell">
+      <div class="ts-label">Session</div>
+      <div id="ts-session" class="ts-big">UNKNOWN</div>
+      <div id="ts-session-note" class="ts-note"></div>
+    </div>
+    <div class="ts-cell" id="ts-faults-cell">
+      <div class="ts-label">Faults</div>
+      <div id="ts-faults" class="ts-big">UNKNOWN</div>
+      <div id="ts-faults-note" class="ts-note"></div>
+    </div>
+    <div class="ts-cell" id="ts-meas-cell">
+      <div class="ts-label">Pack voltage / current / power</div>
+      <div id="ts-meas" class="ts-big">no data</div>
+      <div id="ts-power" class="ts-power"></div>
+      <div id="ts-meas-note" class="ts-note"></div>
+    </div>
+  </div>
+</section>
+
 <section id="controls" class="panel" aria-labelledby="h-controls">
   <h2 id="h-controls">Controls</h2>
   <p id="controls-disabled" class="muted" hidden></p>
+  <div id="ctl-faults" class="ctl-faults" hidden>
+    <ul id="ctl-faults-list" class="ctl-faultlist"></ul>
+    <p id="ctl-faults-instr" class="ctl-instr" hidden></p>
+    <div class="ctl-clear" id="ctl-clear">
+      <div class="ctl-row"><button type="button" id="btn-clear">Clear faults</button></div>
+      <div class="muted" id="clear-why"></div>
+      <div class="reply" id="reply-CLEAR" aria-live="polite"></div>
+    </div>
+    <p id="ctl-faults-wake" class="muted" hidden></p>
+  </div>
   <div class="ctl-grid">
     <div class="ctl" id="ctl-start">
-      <div class="ctl-row">
-        <label><input type="radio" name="startmode" value="discharge" checked> Discharge</label>
-        <label><input type="radio" name="startmode" value="charge"> Charge</label>
-        <button type="button" id="btn-start">Start</button>
-      </div>
+      <fieldset class="ctl-row modes" id="startmode-set">
+        <legend class="muted">Mode</legend>
+        <label><input type="radio" name="startmode" id="mode-discharge" value="discharge" checked> Discharge</label>
+        <label><input type="radio" name="startmode" id="mode-charge" value="charge"> Charge</label>
+      </fieldset>
+      <div class="ctl-row"><button type="button" id="btn-start">Start (discharge)</button></div>
+      <div class="muted" id="mode-why"></div>
+      <div class="muted" id="start-why"></div>
       <div class="confirm" id="confirm-start" hidden>
         <span id="confirm-start-text"></span>
         <button type="button" id="btn-start-yes" class="danger">Confirm start</button>
@@ -32,20 +78,14 @@
       </div>
       <div class="reply" id="reply-START" aria-live="polite"></div>
     </div>
-    <div class="ctl" id="ctl-stop">
-      <div class="ctl-row"><button type="button" id="btn-stop" class="stop">Stop</button></div>
-      <div class="reply" id="reply-STOP" aria-live="polite"></div>
-    </div>
-    <div class="ctl" id="ctl-clear">
-      <div class="ctl-row"><button type="button" id="btn-clear">Clear faults</button></div>
-      <div class="reply" id="reply-CLEAR" aria-live="polite"></div>
-    </div>
     <div class="ctl" id="ctl-sleep">
-      <div class="ctl-row">
+      <fieldset class="ctl-row modes" id="sleeplevel-set">
+        <legend class="muted">Sleep level</legend>
         <label><input type="radio" name="sleeplevel" value="1" checked> Sleep 1</label>
         <label><input type="radio" name="sleeplevel" value="3"> Sleep 3</label>
-        <button type="button" id="btn-sleep">Sleep</button>
-      </div>
+      </fieldset>
+      <div class="ctl-row"><button type="button" id="btn-sleep">Put pack to sleep</button></div>
+      <div class="muted" id="sleep-why"></div>
       <div class="confirm" id="confirm-sleep" hidden>
         <span id="confirm-sleep-text"></span>
         <button type="button" id="btn-sleep-yes" class="danger">Confirm sleep</button>
@@ -62,13 +102,14 @@
 </section>
 
 <section class="panel" aria-labelledby="h-faults">
-  <h2 id="h-faults">Faults and warnings</h2>
-  <div id="faults-active"></div>
+  <h2 id="h-faults">Fault details</h2>
+  <p class="muted">The fault list in Controls is the main one. This section shows each bit with its source.</p>
   <details><summary>All fault and warning bits</summary><div id="faults-all"></div></details>
 </section>
 
 <section class="panel" aria-labelledby="h-cells">
   <h2 id="h-cells">Cell voltages</h2>
+  <p id="cells-can2-note" class="muted" hidden></p>
   <div id="cell-stats" class="stats"></div>
   <div id="cells" class="grid14"></div>
   <p class="muted" id="mask-line"></p>
@@ -76,12 +117,13 @@
 
 <section class="panel" aria-labelledby="h-temps">
   <h2 id="h-temps">Temperatures</h2>
+  <p id="temps-can2-note" class="muted" hidden></p>
   <div id="temps" class="grid14"></div>
   <div id="temp-stats" class="rows"></div>
 </section>
 
 <section class="panel" aria-labelledby="h-contactors">
-  <h2 id="h-contactors">Contactors</h2>
+  <h2 id="h-contactors">Contactor details</h2>
   <div id="contactor-summary" class="stats"></div>
   <div id="contactors" class="rows"></div>
 </section>

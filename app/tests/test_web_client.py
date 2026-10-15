@@ -206,3 +206,13 @@ def test_link_reconnects_with_backoff_and_never_resends_start():
         await link.close()
         server.close()
     asyncio.run(scenario())
+
+
+def test_state_change_time_only_moves_on_change():
+    core, _ = make_core()
+    core.feed_line("S STATE STOPPED", 1.0)
+    core.feed_line("S STATE STOPPED", 2.0)
+    assert core.summary(3.0)["state_changed_age"] == 2.0
+    core.feed_line("S STATE RUNNING CHARGE", 4.0)
+    core.feed_line("S STATE RUNNING CHARGE", 5.0)
+    assert core.summary(6.0)["state_changed_age"] == 2.0 and core.summary(6.0)["state_age"] == 1.0

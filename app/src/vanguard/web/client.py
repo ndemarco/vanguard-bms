@@ -64,6 +64,7 @@ class ClientCore:
         self.bridge_mode: Optional[str] = None
         self.bridge_state: Optional[str] = None
         self.bridge_state_t: Optional[float] = None
+        self.bridge_state_changed_t: Optional[float] = None  # when the STATE text last changed (page display only)
         self.config_lines: list = []
         self.want_run = False
         self.run_mode: Optional[str] = None
@@ -147,6 +148,8 @@ class ClientCore:
         elif head == "CONFIG":
             self.config_lines.append(rest)
         elif head == "STATE":
+            if rest != self.bridge_state:
+                self.bridge_state_changed_t = now
             self.bridge_state = rest
             self.bridge_state_t = now
             if rest == "STOPPED" and self.want_run and self.start_acked:
@@ -271,6 +274,8 @@ class ClientCore:
             "mode": self.bridge_mode,
             "state": self.bridge_state,
             "state_age": None if self.bridge_state_t is None else round(now - self.bridge_state_t, 2),
+            "state_changed_age": None if self.bridge_state_changed_t is None
+            else round(now - self.bridge_state_changed_t, 2),
             "config": list(self.config_lines),
             "app_wants_running": self.want_run,
             "app_mode": self.run_mode,

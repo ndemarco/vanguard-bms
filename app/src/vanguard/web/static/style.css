@@ -11,6 +11,8 @@
   }
 }
 * { box-sizing: border-box; }
+/* Elements with the hidden attribute stay hidden even when a class sets display (e.g. .confirm uses flex). */
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, sans-serif; }
 header, main, footer, #banners { max-width: 1200px; margin: 0 auto; padding: 0 16px; }
 header { padding-top: 12px; }
@@ -19,7 +21,9 @@ h2 { font-size: 1.05rem; margin: 0 0 10px; }
 footer { padding-bottom: 24px; font-size: .85rem; }
 .muted { color: var(--muted); }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin: 12px 0; }
-.statusline { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .9rem; }
+.statusline { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .85rem; }
+.hdr { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
+.showall { font-size: .85rem; color: var(--muted); cursor: pointer; }
 .pill { padding: 1px 8px; border-radius: 10px; border: 1px solid var(--line); font-weight: 600; }
 .pill.ok { color: var(--ok); border-color: var(--ok); }
 .pill.bad { color: var(--bad); border-color: var(--bad); }
@@ -69,14 +73,58 @@ button.danger { border-color: var(--warn); font-weight: 700; }
 .fault.active { border: 2px solid var(--bad); background: var(--badbg); font-weight: 700; }
 .fault.active.nonblocking { border-color: var(--warn); }
 .fault.unseen { opacity: .55; }
-.nofault { color: var(--ok); font-weight: 600; }
 .statuslog { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow: auto; font: .8rem/1.5 ui-monospace, monospace; }
 .statuslog li { padding: 1px 0; border-bottom: 1px dotted var(--line); word-break: break-word; }
 .statuslog .src { color: var(--muted); }
 details { margin-top: 8px; }
 summary { cursor: pointer; }
+.topstatus { position: sticky; top: 0; z-index: 5; border-width: 2px; }
+.ts-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.ts-cell { border: 2px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+.ts-label { font-size: .8rem; color: var(--muted); }
+.ts-big { font-size: 1.7rem; font-weight: 800; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.ts-note { font-size: .8rem; color: var(--muted); min-height: 1.1em; }
+.ts-cell.ok { border-color: var(--ok); }
+.ts-cell.ok .ts-big { color: var(--ok); }
+.ts-cell.warn { border-color: var(--warn); }
+.ts-cell.warn .ts-big { color: var(--warn); }
+.ts-cell.bad { border-color: var(--bad); background: var(--badbg); }
+.ts-cell.bad .ts-big { color: var(--bad); }
+.ts-cell.neutral .ts-big { color: var(--fg); }
+.ts-meas-sub { font-size: .95rem; font-weight: 600; }
 @media (max-width: 520px) {
+  .commsbar { position: static; font-size: 1rem; }
+  .ts-big { font-size: 1.35rem; }
+  .topstatus { position: static; }
   body { font-size: 14px; }
   .grid14 { grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); }
   button { min-height: 44px; }
 }
+
+.ctl-faults { margin-bottom: .75rem; }
+.ctl-faultlist { list-style: none; margin: .25rem 0; padding: 0; }
+.ctl-faultlist li { padding: .15rem 0; }
+.ctl-instr { margin: .25rem 0; font-weight: 600; }
+.ctl-instr.urgent { color: var(--bad); }
+.ctl-clear { margin: .35rem 0; }
+button.emphasis { outline: 3px solid var(--bad); font-weight: 700; }
+fieldset.modes { border: 0; padding: 0; margin: 0 0 6px; }
+fieldset.modes legend { padding: 0; font-size: .8rem; float: left; margin-right: 8px; }
+fieldset.modes:disabled label { opacity: .7; }
+.reply { transition: opacity .4s; }
+.reply:empty { min-height: 0; }
+button#btn-start { font-weight: 700; }
+.commsbar { position: sticky; top: 0; z-index: 10; width: 100%; background: var(--bad); color: #fff; font-weight: 800;
+  font-size: 1.15rem; padding: 10px 16px; text-align: center; }
+body.commslost .ts-big, body.commslost .row .val, body.commslost .cell .v, body.commslost .stats { color: var(--stale) !important; }
+body.commslost .ts-cell:not(#ts-contactors-cell) { border-color: var(--line); background: none; }
+.ts-warnnote { color: var(--warn); font-weight: 600; }
+.ts-warnnote:empty { display: none; }
+body.commslost .topstatus { top: 46px; }
+@media (min-width: 900px) { #ts-contactors-cell { grid-column: span 2; } }
+#controls-disabled { font-weight: 600; }
+.ts-big { overflow-wrap: anywhere; }
+.ts-big.long { font-size: 1.25rem; }
+.ts-stop { margin-top: .5rem; }
+.ts-stop button.stop { width: 100%; min-height: 44px; font-size: 1.1rem; }
+.ts-power { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; }

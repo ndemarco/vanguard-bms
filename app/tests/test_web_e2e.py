@@ -107,7 +107,7 @@ def test_start_close_contactors_stop_open(stack):
     hl = d["headline"]
     for k in ("pack_voltage", "current", "soc", "soh", "limits"):
         assert any(s["seen"] for s in hl[k]), k
-    assert all("sign unverified" in s["label_note"] for s in hl["current"])
+    assert not any("unverified" in s.get("label_note", "") for s in hl["current"])
     assert {f["name"] for f in d["faults"]["can1_0x120"]} == {n for _, _, n, _, _ in FAULT_BITS}
     assert {f["name"] for f in d["faults"]["can2_0x18FF08F3_latched"]} == set(LATCHED_WORD_BITS.values())
     assert {f["name"] for f in d["faults"]["can2_0x18FF08F3_live"]} == set(LIVE_WORD_BITS.values())

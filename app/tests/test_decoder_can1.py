@@ -20,7 +20,7 @@ def test_pack_current_and_limits_big_endian():
     assert f.value("discharge_limit_a") == pytest.approx(120.0)
     assert f.value("charge_limit_a") == pytest.approx(36.0)
     assert f.value("counter") == 7
-    assert f.signal("pack_current_ma").conf == "I"  # unit and sign are inferred
+    assert f.signal("pack_current_ma").conf == "C"  # sign bench-confirmed 2026-10-11
 
 
 def test_pack_current_positive_and_raw_kept():

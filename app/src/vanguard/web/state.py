@@ -82,6 +82,7 @@ class PackState:
         self.unknown_frames = 0
         self.total_frames = 0
         self.last_frame_t: Optional[float] = None
+        self.last_rx: Dict[Tuple[int, int], float] = {}  # (bus, id) -> arrival time of the last received frame
 
     @staticmethod
     def key(frame_name: str, signal: str) -> str:
@@ -95,6 +96,7 @@ class PackState:
             self.tx_rate.add(now)
         else:
             self.rx_rate.setdefault(frame.bus, RateMeter()).add(now)
+            self.last_rx[(frame.bus, frame.can_id)] = now
         k = (frame.bus, frame.can_id)
         self.frame_counts[k] = self.frame_counts.get(k, 0) + 1
         dec = decode(frame.bus, frame.can_id, frame.data)
@@ -126,6 +128,11 @@ class PackState:
         age = max(0.0, now - rec.t)
         return {"key": key, "seen": True, "value": rec.value, "raw": rec.raw, "unit": rec.unit, "conf": rec.conf,
                 "valid": rec.valid, "age": round(age, 2), "stale": age > self.stale_after(rec), "note": rec.note}
+
+    def rx_seen(self, bus: int) -> bool:
+        """True once at least one frame was received on this pack bus (transmitted frames do not count)."""
+        m = self.rx_rate.get(bus)
+        return m is not None and m._first is not None
 
     def rates(self, now: float) -> dict:
         return {"bus1_rx": round(self.rx_rate[1].rate(now), 1), "bus2_rx": round(self.rx_rate[2].rate(now), 1),

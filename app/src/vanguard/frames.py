@@ -184,8 +184,8 @@ CAN1_SPECS = (
     FrameSpec("sdo_reply", CAN1, 0x594, PACK_TX, dlc=8, custom="sdo_reply", note="DLC = n + 4"),
 
     FrameSpec("pack_current_limits", CAN1, 0x111, PACK_TX, 50, fields=(
-        _c1("pack_current_ma", 0, 3, signed=True, unit="mA", conf="I",
-            note="signed 24-bit, 1 mA/count; format [C], unit and sign (positive = into pack) [I]"),
+        _c1("pack_current_ma", 0, 3, signed=True, unit="mA", conf="C",
+            note="signed 24-bit, 1 mA/count; positive = into the pack (bench-confirmed 2026-10-11)"),
         _c1("discharge_limit_a", 3, 2, scale=0.1, unit="A", conf="I", note="format [C], direction [I]"),
         _c1("charge_limit_a", 5, 2, scale=0.1, unit="A", conf="I", note="format [C], direction [I]"),
         _c1("counter", 7, 1, conf="C"),
