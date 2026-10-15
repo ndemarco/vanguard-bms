@@ -30,7 +30,7 @@ Every claim in the protocol document carries a tag:
 - **[I]** inferred: reasoned from context or arithmetic. Check it on a bench before trusting it.
 - **[?]** unknown.
 
-**None of it has been checked against a live pack yet.** The decoder keeps the raw integer next to every scaled
+**Only CAN1 idle telemetry, the keep-alive and contactor closing have been checked, on a bench on 2026-10-11; the rest is unchecked against a live pack.** The decoder keeps the raw integer next to every scaled
 value, and the web page shows the confidence tag next to every signal, so that a wrong guess is visible rather
 than quietly wrong.
 

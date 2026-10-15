@@ -2,11 +2,11 @@
 
 Status: derived by disassembling the full flash image `DSPIC33EP128GS806.hex` read from a recovered
 Vanguard lithium pack (Club Car Tempo golf car, NMC, 14 series cells, about 51.6 V nominal).
-The image itself is not in this repository. Nothing here has been checked against a live pack. Every claim carries a confidence tag:
+The image itself is not in this repository. First CAN1 bench results (idle telemetry, keep-alive, contactor closing) were obtained on 2026-10-11 and are listed in Appendix D; CAN2 and most commands are still unchecked against a live pack. Every claim carries a confidence tag:
 
 | Tag | Meaning |
 |---|---|
-| **[C]** | Confirmed: read directly from the code or constant tables. |
+| **[C]** | Confirmed: read directly from the code or constant tables, or (where stated) bench-confirmed on a live pack. |
 | **[I]** | Inferred: reasoned from code context, arithmetic or table magnitudes. Verify on a bench before relying on it. |
 | **[?]** | Unknown. |
 
@@ -82,7 +82,7 @@ Vehicle-side wiring reported by the owner [C as reported, not traced by the auth
 * F (58 VDC MN EN) goes to the key switch input (KSI) of the motor control unit and to the instrument panel. F is an output from the pack to loads, not an input [I].
 * G (58 VDC DISP EN) goes to the Visage unit, Club Car's on-board display and fleet-management computer [I]. G is a feed to the display.
 * F, G and H are independently switched outputs, not taps behind the contactors: the Club Car diagnostic screen shows "Battery Output VCM Power: On" while "Battery Main Contactor State: Open" (Appendix C). They are the three outputs the host drives with `0x105` D0 bits 2, 4, 6 (motor control unit, vehicle control module, DC-DC converter power) [I, medium-high]. Bit-to-pin order is [?]; a meter on F, G, H while toggling each bit settles it (section 10).
-* Input mapping (hypothesis): the diagnostic screen reports exactly two inputs, "Key Switch Input" and "Charger Input", matching the two inputs the firmware reports on CAN1 (RB13, RB14) [I, medium-high]. They are probably vehicle pins C or T (key) and K (charger wake up); which is which is [?]. The enable input RB12 and the input RB11 are two of `en12v`, `den`, `estp`, `cen` [?]. Confidence in section 8.
+* Input mapping (hypothesis): the diagnostic screen reports exactly two inputs, "Key Switch Input" and "Charger Input", matching the two inputs the firmware reports on CAN1 (RB13, RB14) [I, medium-high]. They are probably vehicle pins C or T (key) and K (charger wake up); which is which is [?]. Bench-confirmed 2026-10-11: RB13 = `en12v` and RB14 = `estp`, so the enable input RB12 and the input RB11 are `den` and `cen` in unknown order [?]. Confidence in section 8.
 See `analysis/hardware_connectors.md`.
 
 ## 3. Quick start for a driver
@@ -90,7 +90,7 @@ See `analysis/hardware_connectors.md`.
 ### 3.1 Bring the pack online and keep it online (CAN1)
 
 1. Open CAN1 at 500 kbit/s. Listen for `0x111`, `0x112`, `0x113`, `0x114`, `0x120` (they arrive without any request).
-2. Make sure the hardware enable input is asserted [I] (section 8). Without it the contactor sequence never starts.
+2. Make sure the hardware enable input is asserted [I] (section 8). Without it the contactor sequence never starts. Known-good bench configuration: `estp` and `en12v` tied to B-, `den` at 12 V, `cen` and `alout` unconnected (bench-confirmed 2026-10-11; which of them is required is not isolated). `0x120` B2 bit 3 is a latch, not a live view of the input: it stays set until a clear-faults request (step 5) clears it, so send one before the first enable (bench-confirmed 2026-10-11).
 3. Send `0x105` every 100 ms (8 data bytes, always send DLC 8):
 
 | Byte | Value | Meaning |
@@ -177,9 +177,9 @@ A pack in sleep wakes on CAN1 activity only if SOC is above 4.9 % and the cells 
 | B0 bit 2 | warning word non-zero | [C] |
 | B0 bit 5 | contactor driver "A" driven (closes second) | bit [C] |
 | B1 bit 5 | contactor driver "B" driven (closes first) | bit [C] |
-| B2-B3 | voltage on pack-side ADC channel, u16, 10 mV/count | [I] unit |
-| B4-B5 | pack voltage = sum of 14 cells, u16, 10 mV/count (5230 = 52.30 V) | [C] |
-| B6-B7 | voltage on output-side ADC channel, u16, 10 mV/count | [I] unit |
+| B2-B3 | voltage on pack-side ADC channel, u16, 10 mV/count (bench: 50.5 V against a 49.9 V cell sum, so the scale is approximate) | [I] unit |
+| B4-B5 | pack voltage = sum of 14 cells, u16, 10 mV/count (5230 = 52.30 V); bench-confirmed 2026-10-11 (0x137E = 49.90 V equals the 14-cell sum within resolution) | [C] |
+| B6-B7 | voltage on output-side ADC channel, u16, 10 mV/count (bench: 49.8-50.0 V as contactor A engaged, so precharge works) | [I] unit |
 
 #### 0x113 (100 ms)
 | Byte/bit | Field | Conf |
@@ -187,10 +187,10 @@ A pack in sleep wakes on CAN1 activity only if SOC is above 4.9 % and the cells 
 | B0 bit 0 | pack is in charge mode (mode 4) | [C]/[I] naming |
 | B0 bit 2, B1 bit 2, B1 bit 5 | echoes of the host-driven aux outputs (`0x105` D0 bits 6, 2, 4) | [C] |
 | B1 bit 0 | cell balancing active | [C] |
-| B2 bit 0, bit 1 | debounced inputs PORTB.13, PORTB.14 asserted (low); meaning unknown | [C]/[?] |
+| B2 bit 0, bit 1 | debounced inputs PORTB.13, PORTB.14 asserted (low): bit 0 = RB13 = board pin `en12v`, bit 1 = RB14 = board pin `estp` (each set by tying that pin to B-; bench-confirmed 2026-10-11) | [C] |
 | B2 bits 2-5 | sub-state x4 while charging: bit 2 entered, bit 3 closing/closed, bit 5 blocked by a fault | [C] |
-| B3 | pack model code: 1, 6, 7, 8, 9, 10 for variants 0-5 | [C] |
-| B5 | state of health, 0.5 %/count (200 = 100 %) | [I] |
+| B3 | pack model code: 1, 6, 7, 8, 9, 10 for variants 0-5 (bench read 1 = variant 0) | [C] |
+| B5 | state of health, 0.5 %/count (200 = 100 %); bench read 0xC8 = 100 % | [I] |
 | B6 | state of charge, 0.5 %/count (200 = 100 %) | [C] arithmetic |
 | B7 | charge current limit by temperature, whole amps (0 when not charging or temperature outside -11..60 degC) | [I] |
 
@@ -209,15 +209,15 @@ Any non-zero byte also sets `0x112` B0 bit 1.
 #### 0x510 / 0x512 / 0x513 / 0x51D (1000 ms, only while `0x105` D1 bit 0 was set)
 | ID | Bytes | Content | Conf |
 |---|---|---|---|
-| `0x510` | B0-B3, B4-B7 | stored identity numbers (u32 BE, u24 in B5-B7); set by CAN2 command `0xC6` | [C]/[I] role |
-| `0x512` | B0-B1, B2-B3, B4-B5, B6-B7 | low cell limit, high cell limit, low pack limit, high pack limit; u16, 10 mV/count. Model 0: 250, 425, 3500, 5880 | [C] |
-| `0x513` | B0 | capacity, whole Ah (73 for model 0) | [C]/[I] unit |
-| | B1-B2, B3-B4 | two current ratings, 0.1 A/count (model 0: 1500, 2400 = 150 A, 240 A) | [I] |
-| | B5 | constant 5 | [?] |
-| | B6, B7 | low and high temperature limit bytes (degC + 40; 20 = -20 C, 110 = +70 C) | [I] |
-| `0x51D` | B0-B2 | `02 09 07` (firmware version 2.9.7) | [I] |
-| | B3 | board address strap value (0x28..0x2E, or 0) | [C]/[I] |
-| | B4-B5 | per-cell charge target voltage, u16 BE mV (4150 or 4200) | [I] |
+| `0x510` | B0-B3, B4-B7 | stored identity numbers (u32 BE, u24 in B5-B7); set by CAN2 command `0xC6`. Bench read `00 04 AE 11 00 03 39 1D` | [C]/[I] role |
+| `0x512` | B0-B1, B2-B3, B4-B5, B6-B7 | low cell limit, high cell limit, low pack limit, high pack limit; u16, 10 mV/count. Model 0: 250, 425, 3500, 5880 (bench-confirmed 2026-10-11) | [C] |
+| `0x513` | B0 | capacity, whole Ah (73 for model 0; the pack reported 73 on the bench, 2026-10-11) | [C]/[I] unit |
+| | B1-B2, B3-B4 | two current ratings, 0.1 A/count (model 0: 1500, 2400 = 150 A, 240 A; bench-confirmed values 2026-10-11, role of each still [I]) | [C] values / [I] role |
+| | B5 | constant 5 (bench read 5) | [?] |
+| | B6, B7 | low and high temperature limit bytes (degC + 40; 0x14 = -20 C, 0x6E = +70 C on the bench) | [I] |
+| `0x51D` | B0-B2 | bench read `02 04 1F` on 2026-10-11 (the earlier reading `02 09 07` as firmware version 2.9.7 was wrong or not a version); meaning unknown | [C] value / [?] meaning |
+| | B3 | board address strap value (0x28..0x2E, or 0; bench read 0x28) | [C]/[I] |
+| | B4-B5 | per-cell charge target voltage, u16 BE mV (4150 or 4200; bench read 4150) | [I] |
 | | B6-B7 | model constant (meaning unknown) | [?] |
 
 #### Counters (1000 ms, no gate)
@@ -459,7 +459,7 @@ Temperatures are degC + 40 internally. Thresholds are read from the active varia
 | B1 | 4 | cell over-voltage warning (non-blocking) | [C] |
 | B1 | 5 | cell under-voltage trip | [C] |
 | B1 | 6 | cell under-voltage warning (non-blocking) | [C] |
-| B2 | 3 | hardware enable input released (contactor closing refused) | [I] |
+| B2 | 3 | hardware enable input released (contactor closing refused); a latch, cleared only by the clear-faults request (`0x105` D1 bit 1), it does not drop when the input is satisfied again | [C] latch (bench-confirmed 2026-10-11); [I] naming |
 | B3 | 1 | contactor voltage mismatch, pack side vs output side | [C] |
 | B3 | 2 | output voltage mismatch or welded contact | [C] |
 | B3 | 7 | over-current trip | [C] |
@@ -549,9 +549,10 @@ Example frames (29-bit ID `0x0CFF00F3`, DLC 8):
 | RA0 (OC3) | contactor driver B, PWM | srelay or Prelay (redundant series contactors) | [C]/[?] |
 | RD4 | precharge output, on only in contactor states 3 and 4; not on the contactor connector | internal precharge path, probably across contactor A | [I] |
 | RA1, RA2 (AN1, AN2) | voltage sense after/before the contactors | packv1 / packv2 | [I] |
-| RB12 | **enable input, active low; gates the contactor machine; release forces sleep** | one of en12v, den, estp, cen; unknown | [?] |
-| RB11 | debounced input, selects which fault word imbalance uses | one of en12v, den, estp, cen; unknown | [?] |
-| RB13, RB14 | debounced inputs, only reported (CAN1 `0x113` B2 bits 0-1) | the diagnostic screen's "Key Switch Input" and "Charger Input", order unknown; vehicle pins C or T and K | [I] medium-high |
+| RB12 | **enable input, active low; gates the contactor machine; release forces sleep** | one of den, cen (not en12v or estp, which are RB13 and RB14); unknown | [?] |
+| RB11 | debounced input, selects which fault word imbalance uses | the other of den, cen; unknown | [?] |
+| RB13 | debounced input, reported in CAN1 `0x113` B2 bit 0 | board pin `en12v` | [C] (bench-confirmed 2026-10-11) |
+| RB14 | debounced input, reported in CAN1 `0x113` B2 bit 1 | board pin `estp` | [C] (bench-confirmed 2026-10-11) |
 | RB6 | wake pin in the sleep loop | unknown | [?] |
 | RA3, RA4, RD3 | aux outputs controlled by `0x105` D0 bits 6, 4, 2; shown on the diagnostic screen as "Battery Output MCU / VCM / DC-DC Power" | vehicle pins F, G, H in unknown order; board labels fatout / alout / fuout in unknown order | [I] medium-high / [?] order |
 | RC13, RC0, RD12 | "board on" outputs (12 V related) | 12vout = vehicle pin D, through a diode to the DC-DC converter | [I] medium-high |
@@ -560,7 +561,7 @@ Example frames (29-bit ID `0x0CFF00F3`, DLC 8):
 | RC2/RC7/RC8, RD9 | SPI2 to the external persistent memory | | [C] |
 | RB0 | temperature multiplexer select | | [C] |
 | RD6/RD5, RC5/RC4 | CAN1 TX/RX, CAN2 TX/RX | can11h/l, canh/l | [C]/[I] |
-No CAN command reads or overrides RB11..RB14. Polarity of the connector inputs is not known from the firmware and needs a bench measurement.
+No CAN command reads or overrides RB11..RB14. RB13 and RB14 assert when their pin is tied to B- (active low, bench-confirmed 2026-10-11); this corrects the earlier guess in `analysis/core.md` that RB12 = en12v. The diagnostic screen's "Key Switch Input" and "Charger Input" labels therefore may not map to RB13/RB14 as guessed in section 2; unresolved. Known-good enable configuration: `estp` and `en12v` tied to B-, `den` at 12 V (permanent jumper to the 12V cavity), `cen` and `alout` unconnected; which of these RB12 needs is not isolated. `12vout` is a true output: the pack generates 12 V there by itself.
 
 ## 9. Dangerous and destructive operations
 * CAN1 `0x614` write `23 51 1F 01 00 00 00 00`: reboots into the bootloader with no password; the pack stops running until the bootloader hands back control.
@@ -569,23 +570,24 @@ No CAN command reads or overrides RB11..RB14. Polarity of the connector inputs i
 * Do not change balancing parameters, limits or variants unless the values are checked against the cell datasheet. This is a lithium pack: protections must stay armed.
 
 ## 10. Open questions and suggested bench tests
-1. **Crystal and bit rate.** The crystal is marked "ECS 16", probably 16 MHz. Confirm the full part number and measure 500 kbit/s with a scope or CAN analyzer on CAN1/CAN2. All periods and time-outs in this document assume it.
+1. **Crystal and bit rate.** CAN1 500 kbit/s is bench-confirmed (2026-10-11). The crystal is marked "ECS 16", probably 16 MHz. Confirm the full part number and measure 500 kbit/s with a scope or CAN analyzer on CAN1/CAN2. All periods and time-outs in this document assume it.
 2. **Which CAN is which.** Continuity from the vehicle "CAN main" pins to the board; confirm CAN1 is the vehicle bus.
-3. **Enable inputs.** Measure the active level of the board's `den`, `cen`, `estp`, `en12v` pins and map them to RB11..RB14 (section 8).
+3. **Enable inputs.** Partly answered 2026-10-11: `en12v` = RB13 and `estp` = RB14, active low; `den`/`cen` = RB11/RB12 still unmapped and the input that RB12 needs is not isolated (Appendix D). Remaining: measure the active level of the board's `den`, `cen`, `estp`, `en12v` pins and map them to RB11..RB14 (section 8).
    Check continuity from vehicle pins C, K, S, T, F, G, H, D to the 15-pin connector, then measure C, S, T with the key off and on, and watch CAN1 `0x113` B2 bits 0-1 and CAN2 `0x0CF096F3` B6 when K is asserted.
    Meter F, G, H while toggling `0x105` D0 bits 2, 4, 6 one at a time to learn which bit powers which output, and D with the pack awake and asleep.
    Assert C, then T/S, then K one at a time and see which of `0x113` B2 bits 0-1 changes (key switch versus charger input).
 4. **Contactor identity.** Which of driver A and driver B is the connector's Prelay and which is srelay, and what path the precharge output switches (probably across contactor A).
 5. **Current sign and unit.** Compare `0x111` B0-B2 and CAN2 current against a clamp meter with a known load; confirm positive = charge and 1 mA/count.
 6. **Limit direction.** Confirm `0x111` B3-B4 is the discharge limit and B5-B6 the charge limit (change SOC or temperature and watch which moves).
-7. **Voltage ADC scale.** The two high-voltage ADC channels (CAN2 `0x0CFF32F3` B2-B5, CAN1 `0x112` B2-B3, B6-B7) use a constant that has no writer in the image; compare with a meter.
+7. **Voltage ADC scale.** Partly answered: on the bench `0x112` B4-B5 matches the cell sum, B2-B3 read 50.5 V against 49.9 V and B6-B7 about 50 V after precharge, so the ADC scale is only approximate. The two high-voltage ADC channels (CAN2 `0x0CFF32F3` B2-B5, CAN1 `0x112` B2-B3, B6-B7) use a constant that has no writer in the image; compare with a meter.
 8. **Pin function of aux outputs** (`fatout`, `alout`, `fuout`) and what `0x105` D0 bits 2, 4, 6 do on the board.
-9. **Pack variant.** The variant index comes from the external memory (byte offset `0xAC`), not a pin. Read it back from `0x113` B3 / `0x0CFF3EF3` B0.
+9. **Pack variant.** Answered: variant 0 (`0x113` B3 = 1, `0x513` B0 = 73 Ah), bench-confirmed 2026-10-11. The variant index comes from the external memory (byte offset `0xAC`), not a pin.
 10. **Counter units, SOH and capacity-learning fields** and the meaning of constants (`0x18FF30F3`, `0x51D` B6-B7, `0x513` B5).
 11. **Event-log record layout** (256-byte records dumped with command `0xCB`): not mapped; decode `FUN_rom_006efc` if the stored cell and temperature snapshot is needed.
-12. **Real transmit periods** were not measured on hardware.
-13. **Capacity mismatch.** The diagnostic screen shows "Battery Ratings 54 Ah"; no variant table holds 54 Ah (73, 75, 98, 134, 72, 76). Read `0x513` B0 and CAN2 `0x0CFF3EF3` B0 and B6-B7 from the pack.
+12. **Real transmit periods.** Partly measured 2026-10-11 on CAN1: `0x111`/`0x112` about 50 ms, `0x113`/`0x114`/`0x120` about 100 ms, `0x517`..`0x51C` 1000 ms. CAN2 not measured.
+13. **Capacity mismatch.** Still open: the pack itself reports 73 Ah in `0x513` B0 (bench, 2026-10-11), against 67.5 Ah on the nameplate and 54 Ah on the screen. The diagnostic screen shows "Battery Ratings 54 Ah"; no variant table holds 54 Ah (73, 75, 98, 134, 72, 76). Read `0x513` B0 and CAN2 `0x0CFF3EF3` B0 and B6-B7 from the pack.
 14. **Isolation resistance.** The diagnostic screen shows 10000 kOhm; no source for it was found in the firmware.
+15. **CAN transmit errors.** During the 6 s of `0x105` transmission on the bench the controller went error-passive once (TX error counter 67 at the end, RX errors 0). Not diagnosed; candidate causes: termination, bit timing. The owner chose to ignore it for now.
 
 ## Appendix A. Variant tables (selected by variant index 0..5; PSV addresses `0xB0B4`, `0xB1F0`, `0xB32C`, `0xB468`, `0xB5A4`, `0xB6E0`)
 | Variant | Cell OV trip (mV) | Cell UV trip (mV) | Deep-discharge cut (mV) | Over-temp (degC) | Capacity (0.01 Ah) | `0x113` B3 model code |
@@ -620,3 +622,27 @@ Owner photo of the Club Car diagnostic tool, "Battery Details" tab (pack state: 
 | Main Contactor State (Open) | `0x112` B0 bit 5, B1 bit 5 | consistent |
 | Module Max Temperature (18 C) | `0x114` B0 minus 40 | consistent |
 The tool's ABOUT and USAGE tabs probably map to `0x51D`/the `0x1018` identity objects and the `0x517`..`0x51C` counters [?].
+
+## Appendix D. First live bench results (2026-10-11)
+Raspberry Pi with a Waveshare 2-CH CAN FD HAT; HAT can0 on the pack's 11-bit bus (`can11h`/`can11l`). Pack on the bench with only a voltmeter across B+/B-. All items below are bench-confirmed 2026-10-11 unless marked otherwise. CAN2 is not yet wired to the pack.
+* **Bus.** 500 kbit/s confirmed (ERROR-ACTIVE, zero RX errors). In listen-only mode nothing ACKs, so the pack retransmits its first frame (`0x113`) forever; with the controller in normal mode (it ACKs, sends nothing) all frames appear.
+* **Idle CAN1 frames and periods.** `0x111`, `0x112` about 50 ms; `0x113`, `0x114`, `0x120` about 100 ms; `0x517`, `0x518`, `0x519`, `0x51A`, `0x51B`, `0x51C` 1000 ms.
+* **Idle values.**
+| Item | Value |
+|---|---|
+| Pack voltage (`0x112` B4-B5 = 0x137E) | 49.90 V, equals the sum of 14 cells within resolution |
+| Cell min / max (`0x114`) | 3548 mV / 3577 mV |
+| Temperatures | 23-24 C |
+| Current | 0 |
+| SOC (`0x113` B6 = 0x30) | 24 % |
+| SOH (`0x113` B5 = 0xC8) | 100 % |
+| Model code (`0x113` B3) | 1 (variant 0) |
+| `0x111` limits | B3-4 = 0x0960 (240 A), B5-6 = 0x0460 (112 A); directions unverified |
+* **Inputs.** Tying `estp` to B- sets `0x113` B2 bit 1 (RB14). Tying `en12v` to B- sets `0x113` B2 bit 0 (RB13). `den`/`cen` remain candidates for RB11/RB12.
+* **12vout.** Measures 12 V with respect to B- with only `estp` and `en12v` tied to B-: the pack generates it, so it is a true output. Pin 11 (plain `12V`) also measures 12 V. On the Club Car cart the circular connector populates only `estp`, `12vout`, `alout`, `en12v`, `can11h`, `can11l` plus a permanent jumper joining cavities 11 and 13 (12V to DEN), so DEN was at 12 V during the successful test.
+* **Latch.** `0x120` B2 bit 3 read 0x08 before the test and stayed 0x08 with `estp` and `en12v` tied; one clear-faults frame cleared it and it stayed 0.
+* **Bring-up.** One `0x105` D0 = 00, D1 = 0x13 (clear faults + enable), then D0 = 00, D1 = 0x11 every 100 ms for 6 s. `0x120` stayed all zero. Contactor driver B (`0x112` B1 bit 5) came on about 0.1 s after the clear, driver A (B0 bit 5) about 0.1 s later (documented B-then-A order). Output-side voltage (B6-B7) was about 49.8-50.0 V as A engaged; pack-side (B2-B3) about 50.5 V against a 49.9 V cell sum. When keep-alives stopped, the contactors opened within about 1 s and the keep-alive timeout fault latched (`0x120` B1 bit 2 = 0x04); the next start needs a clear-faults first.
+* **Known-good enable configuration** (not proof each part is needed): `estp` and `en12v` tied to B-, `den` at 12 V via the permanent jumper, `cen` and `alout` unconnected.
+* **Gated frames** (only while `0x105` D1 bit 0 is set): `0x510` = `00 04 AE 11 00 03 39 1D`; `0x512` = 250, 425, 3500, 5880 (2.50/4.25/35.00/58.80 V, matches model 0); `0x513` = `49 05DC 0960 05 14 6E` (73 Ah, 150 A, 240 A, B5 = 5, limits -20 C and +70 C); `0x51D` = `02 04 1F 28 1036 0960` (B0-B2 `02 04 1F`, not `02 09 07`; board address 0x28; charge target 4150 mV).
+* **Capacity conflict** (nameplate 67.5 Ah, Club Car screen 54 Ah, pack reports 73 Ah) remains open.
+* **Transmit errors.** The controller went error-passive once during the 6 s of transmitting (TX error counter 67 at the end, RX errors 0); not diagnosed (open question 15).
