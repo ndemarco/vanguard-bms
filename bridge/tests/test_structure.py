@@ -41,6 +41,16 @@ def _write_calls():
     return found
 
 
+def test_only_known_write_calls_exist():
+    assert _write_calls() == {
+        ("txgate.py", "send", "self._writer.send"),            # THE final CAN send
+        ("core.py", "_sleep", "self.gate.send"),               # via the TxGate
+        ("core.py", "_tick", "self.gate.send"),                # via the TxGate
+        ("service.py", "_flush_client", "self.client.send"),   # Unix socket to the client
+        ("service.py", "_refuse_second_client", "conn.send"),  # Unix socket refusal line
+    }
+
+
 def test_tripwire_sees_getattr_and_lambdas(tmp_path, monkeypatch):
     (tmp_path / "evil.py").write_text("f = lambda s: s.sendto(b'', 0)\ng = lambda s: getattr(s, 'send')(b'')\n")
     monkeypatch.setattr(__import__(__name__), "PKG", tmp_path)

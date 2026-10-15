@@ -70,7 +70,7 @@ def test_wrong_id_format_latches_and_refuses_start(rig, bus, eff):
     c.sendall(b"START DISCHARGE\n")
     rig.advance(200_000, client=c, hb_every=100_000)
     assert rig.svc.bridge.state == RUNNING
-    rig.link._rx[bus].append(pack(0x105 if not eff else 0x0CFF20F3, bytes(8), eff=eff))
+    rig.link._rx[bus].append(pack(0x111 if not eff else 0x0CFF20F3, bytes(8), eff=eff))
     rig.svc.step(0)
     assert rig.svc.bridge.state == STOPPED
     c.sendall(b"START DISCHARGE\nSLEEP 1\n")
