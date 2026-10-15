@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vanguard-bridge"
+version = "0.1.0"
+description = "Safety-critical CAN bridge service between a Vanguard 14S BMS and one controlling client"
+requires-python = ">=3.11"
+dependencies = ["vanguard"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+vanguard-bridge = "vanguard_bridge.service:main"
+vanguard-bridge-netsetup = "vanguard_bridge.netsetup:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

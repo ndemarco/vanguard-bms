@@ -1,0 +1,11 @@
+# Append to /boot/firmware/config.txt (Raspberry Pi OS bookworm), then reboot.
+# Board: Waveshare 2-CH CAN FD HAT, two MCP2518FD controllers (mcp251xfd driver), 40 MHz clock.
+# Confirmed on the owner's Pi 4: both controllers initialize ("MCP2518FD rev0.0 ... successfully
+# initialized"), spi1.0 became can0 and spi0.0 became can1. Kernel names follow probe order and
+# are not tied to a HAT terminal; the bridge checks the SPI device in bridge.toml instead.
+# Overlay lines are from the Waveshare 2-CH CAN FD HAT wiki. No oscillator parameter is needed.
+# The earlier MCP2515 overlays (mcp2515, mcp2515-can0/can1) fail with probe error -110 on this board.
+dtparam=spi=on
+dtoverlay=spi1-3cs
+dtoverlay=mcp251xfd,spi0-0,interrupt=25
+dtoverlay=mcp251xfd,spi1-0,interrupt=24

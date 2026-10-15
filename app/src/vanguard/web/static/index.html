@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Vanguard pack</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>Vanguard pack</h1>
+  <div id="statusline" class="statusline" aria-live="polite"></div>
+</header>
+<div id="banners"></div>
+
+<main>
+<section id="controls" class="panel" aria-labelledby="h-controls">
+  <h2 id="h-controls">Controls</h2>
+  <p id="controls-disabled" class="muted" hidden></p>
+  <div class="ctl-grid">
+    <div class="ctl" id="ctl-start">
+      <div class="ctl-row">
+        <label><input type="radio" name="startmode" value="discharge" checked> Discharge</label>
+        <label><input type="radio" name="startmode" value="charge"> Charge</label>
+        <button type="button" id="btn-start">Start</button>
+      </div>
+      <div class="confirm" id="confirm-start" hidden>
+        <span id="confirm-start-text"></span>
+        <button type="button" id="btn-start-yes" class="danger">Confirm start</button>
+        <button type="button" id="btn-start-no">Cancel</button>
+      </div>
+      <div class="reply" id="reply-START" aria-live="polite"></div>
+    </div>
+    <div class="ctl" id="ctl-stop">
+      <div class="ctl-row"><button type="button" id="btn-stop" class="stop">Stop</button></div>
+      <div class="reply" id="reply-STOP" aria-live="polite"></div>
+    </div>
+    <div class="ctl" id="ctl-clear">
+      <div class="ctl-row"><button type="button" id="btn-clear">Clear faults</button></div>
+      <div class="reply" id="reply-CLEAR" aria-live="polite"></div>
+    </div>
+    <div class="ctl" id="ctl-sleep">
+      <div class="ctl-row">
+        <label><input type="radio" name="sleeplevel" value="1" checked> Sleep 1</label>
+        <label><input type="radio" name="sleeplevel" value="3"> Sleep 3</label>
+        <button type="button" id="btn-sleep">Sleep</button>
+      </div>
+      <div class="confirm" id="confirm-sleep" hidden>
+        <span id="confirm-sleep-text"></span>
+        <button type="button" id="btn-sleep-yes" class="danger">Confirm sleep</button>
+        <button type="button" id="btn-sleep-no">Cancel</button>
+      </div>
+      <div class="reply" id="reply-SLEEP" aria-live="polite"></div>
+    </div>
+  </div>
+</section>
+
+<section class="panel" aria-labelledby="h-headline">
+  <h2 id="h-headline">Pack</h2>
+  <div id="headline" class="cards"></div>
+</section>
+
+<section class="panel" aria-labelledby="h-faults">
+  <h2 id="h-faults">Faults and warnings</h2>
+  <div id="faults-active"></div>
+  <details><summary>All fault and warning bits</summary><div id="faults-all"></div></details>
+</section>
+
+<section class="panel" aria-labelledby="h-cells">
+  <h2 id="h-cells">Cell voltages</h2>
+  <div id="cell-stats" class="stats"></div>
+  <div id="cells" class="grid14"></div>
+  <p class="muted" id="mask-line"></p>
+</section>
+
+<section class="panel" aria-labelledby="h-temps">
+  <h2 id="h-temps">Temperatures</h2>
+  <div id="temps" class="grid14"></div>
+  <div id="temp-stats" class="rows"></div>
+</section>
+
+<section class="panel" aria-labelledby="h-contactors">
+  <h2 id="h-contactors">Contactors</h2>
+  <div id="contactor-summary" class="stats"></div>
+  <div id="contactors" class="rows"></div>
+</section>
+
+<section class="panel" aria-labelledby="h-inputs">
+  <h2 id="h-inputs">Inputs</h2>
+  <div id="inputs" class="rows"></div>
+</section>
+
+<section class="panel" aria-labelledby="h-counters">
+  <h2 id="h-counters">Counters</h2>
+  <div id="counters" class="rows"></div>
+</section>
+
+<section class="panel" aria-labelledby="h-rates">
+  <h2 id="h-rates">Traffic</h2>
+  <div id="rates" class="stats"></div>
+  <div id="host-tx" class="rows"></div>
+</section>
+
+<section class="panel" aria-labelledby="h-log">
+  <h2 id="h-log">Status lines</h2>
+  <p id="logging-line" class="muted"></p>
+  <ol id="statuslog" class="statuslog"></ol>
+</section>
+</main>
+<footer class="muted">[C] confirmed, [I] inferred, [?] unknown. Every value shows the raw integer beside it.</footer>
+<script src="/app.js"></script>
+</body>
+</html>
