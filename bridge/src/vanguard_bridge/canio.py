@@ -1,12 +1,12 @@
 """SocketCAN access (stdlib ``socket.AF_CAN``, no python-can).
 
-SAFETY-CRITICAL in one respect: pack CAN2 is opened by :func:`open_pack_can2`,
+SAFETY-CRITICAL in one respect: pack CAN is opened by :func:`open_pack_can2`,
 which creates the socket inside a :class:`Can2ReceiveOnly` and never returns it.
 That class has no method that writes. The OS layer adds listen-only mode and a
 drop-everything tc filter on the same interface (``netsetup.py``, checked by
 ``netcheck.py``).
 
-Pack CAN1's socket is returned to the caller only so it can be handed to the
+Pack CAN11's socket is returned to the caller only so it can be handed to the
 :class:`~vanguard_bridge.txgate.TxGate` (writes) and a :class:`CanReceiver` (reads).
 """
 
@@ -55,7 +55,7 @@ class CanReceiver:
 
 
 class Can2ReceiveOnly(CanReceiver):
-    """Pack CAN2. Receive only: there is deliberately no send, write or socket accessor."""
+    """Pack CAN. Receive only: there is deliberately no send, write or socket accessor."""
 
     def __init__(self, sock):
         super().__init__(2, sock)
@@ -73,7 +73,7 @@ def _open_raw(ifname: str) -> socket.socket:
 
 
 def open_pack_can1(ifname: str):
-    """Return ``(writer_socket, receiver)`` for pack CAN1. The writer goes only to the TxGate."""
+    """Return ``(writer_socket, receiver)`` for pack CAN11. The writer goes only to the TxGate."""
     s = _open_raw(ifname)
     return s, CanReceiver(1, s)
 

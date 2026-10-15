@@ -12,7 +12,7 @@ from test_service import Rig, rig  # noqa: F401  (fixture)
 
 
 class SwappedSimLink(SimLink):
-    """Simulated pack wired the wrong way round: the TX interface is on pack CAN2."""
+    """Simulated pack wired the wrong way round: the TX interface is on pack CAN."""
 
     def pump(self):
         target = self._clock() - self._t0
@@ -24,7 +24,7 @@ class SwappedSimLink(SimLink):
     def _deliver(self, raw):
         self.pump()
         f = unpack(raw)
-        self.sim.receive(2, f.can_id, f.data)  # our "CAN1" frames land on pack CAN2
+        self.sim.receive(2, f.can_id, f.data)  # our "CAN11" frames land on pack CAN
 
 
 @pytest.fixture

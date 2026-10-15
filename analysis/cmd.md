@@ -5,15 +5,15 @@ All addresses are program word addresses as in out2/listing.txt. RAM names are i
 
 ## 0. Summary for a driver writer
 
-* There are two buses. CAN2 (29-bit, J1939 style IDs) carries a small command set. CAN1 (11-bit) carries two "enable" frames from the vehicle or charger (0x105, 0x515) and a CANopen-style service channel (0x614 request, 0x594 reply).
-* No command on either bus closes the contactors. Closing is automatic and is driven by CAN1 0x105 (byte 0 and byte 1) plus the pack's own voltage/temperature checks. The only contactor-related command is the opposite: any frame with ID 0x0CFF00F3 puts the pack in "service mode" (state 8), which stops the normal contactor logic and drives the contactor outputs off on every main-loop pass. (CONFIRMED wa 009368/0093ba, 0086fa tail, 006508; contactor naming of the output pin is INFERRED.)
-* Four of the five accepted CAN2 IDs have no effect on the pack at all (CONFIRMED, see 1.1 to 1.3).
+* There are two buses. CAN (29-bit, J1939 style IDs) carries a small command set. CAN11 (11-bit) carries two "enable" frames from the vehicle or charger (0x105, 0x515) and a CANopen-style service channel (0x614 request, 0x594 reply).
+* No command on either bus closes the contactors. Closing is automatic and is driven by CAN11 0x105 (byte 0 and byte 1) plus the pack's own voltage/temperature checks. The only contactor-related command is the opposite: any frame with ID 0x0CFF00F3 puts the pack in "service mode" (state 8), which stops the normal contactor logic and drives the contactor outputs off on every main-loop pass. (CONFIRMED wa 009368/0093ba, 0086fa tail, 006508; contactor naming of the output pin is INFERRED.)
+* Four of the five accepted CAN IDs have no effect on the pack at all (CONFIRMED, see 1.1 to 1.3).
 * Writes that persist (calibration, pack model, limits, serial) are saved by the firmware into an event log held in an external SPI NAND flash chip (not into the MCU's own flash). They are re-read at boot. Balancing parameters (cmd 0xC3) are RAM only.
-* Reply/acknowledge frames are on CAN2 29-bit IDs 0x18FF50F3 (log write acknowledge), 0x18FF51F3 (log index), 0x18FF52F3 (log record dump).
+* Reply/acknowledge frames are on CAN 29-bit IDs 0x18FF50F3 (log write acknowledge), 0x18FF51F3 (log index), 0x18FF52F3 (log record dump).
 * Always send 8 data bytes. The receive code never tests the DLC (CONFIRMED wa 009368, 008c22: data bytes 17b9..17c0 are read straight from the buffer), so a short frame is parsed with stale bytes.
 * Commands run inside the CAN receive interrupt (wa 00041c calls FUN_rom_009368; wa 0003f2 calls FUN_rom_009284). Event-log writes (SPI NAND program + verify, can take milliseconds) therefore run in interrupt context; do not send commands back to back faster than about 50 ms.
 
-## 1. CAN2 receive (29-bit), dispatcher FUN_rom_009368
+## 1. CAN receive (29-bit), dispatcher FUN_rom_009368
 
 Source: wa 009368..0093d4. The function calls FUN_rom_00ee44(&0x17b2) to fetch one frame from the hardware FIFO. Frames are delivered one per interrupt. On every frame, before the ID test, it executes `clr 0x1666, 0x1668, 0x166e, 0x1670` (wa 00937a..000380). Nothing in the program reads those four words (listing grep: only `clr.w` instructions exist), so they are dead timeout counters (CONFIRMED).
 
@@ -32,7 +32,7 @@ Who sends them: SA 0x49 (decimal 73) is the same sender for the three 0x...49 ID
 
 ### 1.1 What happens when 0x1B frames and 0x18DFFFF3 stop arriving or never arrive
 
-Nothing. There is no timer on any CAN2 receive ID (CONFIRMED: the only per-frame side effect is clearing the four dead words). There is no J1939 request-for-PGN (0xEA00) handler at all (CONFIRMED: no compare against 0x18EAxxxx anywhere in the dispatcher). The BMS never answers a request; it broadcasts its status periodically (other sections).
+Nothing. There is no timer on any CAN receive ID (CONFIRMED: the only per-frame side effect is clearing the four dead words). There is no J1939 request-for-PGN (0xEA00) handler at all (CONFIRMED: no compare against 0x18EAxxxx anywhere in the dispatcher). The BMS never answers a request; it broadcasts its status periodically (other sections).
 
 ### 1.2 0x0CFFBC49, byte layout (FUN_rom_009178, wa 009178..009194)
 
@@ -48,17 +48,17 @@ Nothing. There is no timer on any CAN2 receive ID (CONFIRMED: the only per-frame
 
 No payload used. A driver does not need to send them. They also give no keep-alive: the pack does not time out without them.
 
-### 1.4 Timeouts on the vehicle side (CAN1 0x105) and how a 0x614 frame changes them
+### 1.4 Timeouts on the vehicle side (CAN11 0x105) and how a 0x614 frame changes them
 
-CAN2 has no timeout. The only link timeout is on CAN1 0x105 (wa 009196 resets, wa 0088bc..0088f2 and 004787..004812 test):
+CAN has no timeout. The only link timeout is on CAN11 0x105 (wa 009196 resets, wa 0088bc..0088f2 and 004787..004812 test):
 
 * 0x105 frame arrival (FUN_rom_009196): clears step counter 0x166a:166c; copies data[0]->0x161b, data[1]->0x161c, data[3]->0x161d; sets the allowed silence 0x1c7c:1c7e = 100 loop steps, or 120000 if data[1] bit 2 is set. CONFIRMED.
 * Main loop steps are every >= 10 ticks of the free-running counter 0x1664 (wa 0086fa: `9 < 1664 - 16ae`). If 0x1664 is a 1 ms tick (INFERRED) one step is about 10 ms, so the default silence limit is about 1 s and the extended one about 20 min.
 * When the step counter exceeds the allowed silence: 0x1c7c is set back to 100, 0x161b &= 0xAB (clears the output request bits 2, 4, 6), and in states 2 or 4 the fault bit 0x100 is set in 0x167e or 0x167c, 0x1624 bit 2 set, and the output stage is shut down by FUN_rom_005218 (contactors open). CONFIRMED (wa 0088f4..00893x).
 * If the counter exceeds allowed silence + 30000 steps (about 5 minutes at 10 ms): event code 0x15 and FUN_rom_006142 (shut down / re-init loop). CONFIRMED (wa 0088bc..0088e4).
-* Any 0x614 frame (CAN1 service channel) sets the allowed silence 0x1c7c:1c7e to 10000 steps (about 100 s) (wa 009284 mov 10000). So a diagnostic session on 0x614 keeps the pack from dropping contactors for 100 s of missing 0x105 frames. CONFIRMED.
+* Any 0x614 frame (CAN11 service channel) sets the allowed silence 0x1c7c:1c7e to 10000 steps (about 100 s) (wa 009284 mov 10000). So a diagnostic session on 0x614 keeps the pack from dropping contactors for 100 s of missing 0x105 frames. CONFIRMED.
 
-### 1.5 CAN1 0x105 and 0x515 (the two "simple" ones, listed because they decide contactor action)
+### 1.5 CAN11 0x105 and 0x515 (the two "simple" ones, listed because they decide contactor action)
 
 | ID | Handler | Bytes |
 |---|---|---|
@@ -79,11 +79,11 @@ Gate G5 = "new-pack gate": the command runs only when (0x1bfe:1c00 / 100) * 5 > 
 
 | Cmd | Byte layout (data[0..7]) | Validation | Gate | Effect (RAM / hardware) | Reply | Persists? | Tag |
 |---|---|---|---|---|---|---|---|
-| 0x00 | 00 xx xx xx xx xx xx xx | none | ignored while 0x16a0 & 0xC0 != 0 (i.e. after 0xDC or 0xDE) | Clears 0x16a0, calls FUN_rom_005bc0: 0x1778=0, FUN_rom_005218 (output-stage shutdown, 0x1622=0xFE, 0x17f9 cleared), LATD15 low, LATD4 low, 0x1678=1 (idle), 0x1679 = 8 if any fault word else 0. Normal logic then resumes and re-evaluates CAN1 0x105. | none (state shows in 0x0CFF20F3 byte0 and 0x18FF08F3) | state only | CONFIRMED wa 008c26..008c3c, 005bc0 |
+| 0x00 | 00 xx xx xx xx xx xx xx | none | ignored while 0x16a0 & 0xC0 != 0 (i.e. after 0xDC or 0xDE) | Clears 0x16a0, calls FUN_rom_005bc0: 0x1778=0, FUN_rom_005218 (output-stage shutdown, 0x1622=0xFE, 0x17f9 cleared), LATD15 low, LATD4 low, 0x1678=1 (idle), 0x1679 = 8 if any fault word else 0. Normal logic then resumes and re-evaluates CAN11 0x105. | none (state shows in 0x0CFF20F3 byte0 and 0x18FF08F3) | state only | CONFIRMED wa 008c26..008c3c, 005bc0 |
 | 0xC3 | C3 xx S T FL FH ~FL ~FH | FL+data[6]=0xFF, FH+data[7]=0xFF | none | 0x1cb6 = S (balance start spread, mV), 0x1cfc = T (stop spread, mV), 0x1cb4 = FH:FL (balance floor, mV). data[1] unused. Defaults are re-applied by FUN_rom_00565a and FUN_rom_005ef6 whenever the pack goes through those (charge-state path), so a value may not last. Balancing logic is FUN_rom_010972 / 010a54. | none | RAM only | CONFIRMED wa 008d66..008db2 |
 | 0xC4 | C4 xx xx xx VL VH ~VL ~VH | same pairs | none | FUN_rom_010c16: value V (mV) clamped to [table 0x60 = 3000, table 0x44 - 5 = 4245 for model 0] then 0x1cfa = V; event code 0x0F -> log write. Only reported in 0x18FF31F3 bytes 2-3 plus a debounce counter nobody reads. | 0x18FF50F3 (log write ack, byte 7 = 0x0F) | yes (log record) | CONFIRMED wa 008db4..008dfa, 010c16..010c66; effect INFERRED (no functional consumer found) |
 | 0xC5 | C5 xx P ~P LL LH ~LL ~LH | P+data[3]=0xFF, LL+data[6]=0xFF, LH+data[7]=0xFF | none | 0x1cbe = P (default 70), 0x1cbc = LH:LL (default 3000); event 0x0D -> log write. 0x1cbe is compared with the percentage 17f0*100/1ad6 in the contactor closing sequence FUN_rom_004e94 (wa 00203x..): precharge ratio threshold, percent (INFERRED). 0x1cbc only echoed in 0x0CFF06F3 bytes 6-7. | 0x18FF50F3 (byte 7 = 0x0D) | yes | CONFIRMED wa 008dfc..008e54, 010c68 |
-| 0xC6 | C6 D1 D2 D3 D4 D5 D6 D7 | none | G5 | 0x165c:165e = D1D2D3 (24-bit big-endian), 0x1658:165a = D4D5D6D7 (32-bit big-endian), event 0x13 -> log write. CAN1 0x510 then transmits D4 D5 D6 D7 00 D1 D2 D3 (a serial/ID number, INFERRED name). | 0x18FF50F3 (byte 7 = 0x13) | yes | CONFIRMED wa 008e56..008f26, 009fd0 block for 0x510 |
+| 0xC6 | C6 D1 D2 D3 D4 D5 D6 D7 | none | G5 | 0x165c:165e = D1D2D3 (24-bit big-endian), 0x1658:165a = D4D5D6D7 (32-bit big-endian), event 0x13 -> log write. CAN11 0x510 then transmits D4 D5 D6 D7 00 D1 D2 D3 (a serial/ID number, INFERRED name). | 0x18FF50F3 (byte 7 = 0x13) | yes | CONFIRMED wa 008e56..008f26, 009fd0 block for 0x510 |
 | 0xC7 | C7 xx xx xx xx xx xx xx | none | G5 | Erases the first 16 blocks (page addresses 0, 0x40, ... 0x3C0) of the external SPI NAND (FUN_rom_00c0ec -> 00c098, opcode 0xD8), zeroes log pointer 0x1b76:1b78 and write counter 0x16be, FUN_rom_00c4e4 rebuilds the log header from current RAM values, FUN_rom_00abce sends the status frame. This wipes the event history and the stored cumulative counters (INFERRED: the counters are stored in the same record) but writes the current calibrations back. | 0x18FF50F3 | yes (erases) | CONFIRMED wa 008f28..008f6a |
 | 0xC9 | C9 xx xx xx xx xx xx xx | none | none | Reads the log index. If pointer 0x1b76:1b78 is 0 first scans the NAND (FUN_rom_00bd72). Sends 0x18FF51F3: bytes 0-3 little-endian = latest record number N_last = ((ptr - 0x20000) >> 8) + 2 (or 1 if ptr = 0); bytes 4-7 little-endian = raw pointer. | 0x18FF51F3 | no | CONFIRMED wa 008f6c..009036 |
 | 0xCB | CB N0 N1 N2 N3 xx xx xx | none | ignored if 0x17f9 != 0 (an output stage is active) | N = N3N2N1N0 little-endian record number. N = 0 does nothing. Stores N in 0x1894:1896, then sends one first frame, then the main loop streams 36 more frames (see 3). | 0x18FF52F3 x37 | no | CONFIRMED wa 009038..009164, 0089c4..008af2 |
@@ -149,9 +149,9 @@ Tables at PSV data addresses 0xB0B4, 0xB1F0, 0xB32C, 0xB468, 0xB5A4, 0xB6E0, 316
 
 table[0xdc] is probably nominal Ah (INFERRED). The commanded default after power-up with no valid record is 0 (wa 004582 / 008cfa).
 
-## 5. CAN1 0x614 service channel (CANopen-style SDO)
+## 5. CAN11 0x614 service channel (CANopen-style SDO)
 
-Handler chain: CAN1 receive interrupt -> FUN_rom_009284 (wa 009284..009366) -> FUN_rom_00a99a (request decode) -> FUN_rom_00a918 (reply builder) or FUN_rom_00a8b2 (raw 8-byte reply). Condition: 11-bit ID with (ID & 0x7F) == 0x14 and (ID & 0x780) == 0x600, which is exactly 0x614 (node ID 20 = 0x14). Hardware filter 2 also passes only 0x614 (from NOTES).
+Handler chain: CAN11 receive interrupt -> FUN_rom_009284 (wa 009284..009366) -> FUN_rom_00a99a (request decode) -> FUN_rom_00a918 (reply builder) or FUN_rom_00a8b2 (raw 8-byte reply). Condition: 11-bit ID with (ID & 0x7F) == 0x14 and (ID & 0x780) == 0x600, which is exactly 0x614 (node ID 20 = 0x14). Hardware filter 2 also passes only 0x614 (from NOTES).
 
 Is it real CANopen? Yes, an expedited-only SDO server subset (CONFIRMED by structure): COB-ID 0x600 + node for requests, 0x580 + node for replies (0x594), byte 0 command-specifier tested as `(b0 & 0xE0) == 0x20` (initiate download request) and `== 0x40` (initiate upload request), bytes 1-2 = 16-bit index little-endian, byte 3 = sub-index, bytes 4-7 = data, the download response is the standard `60 idx_lo idx_hi sub 00 00 00 00`, and the objects served are the standard CANopen 0x1000 (device type), 0x1018 (identity) and 0x1F51 (program control, CiA 302-3). It lacks: abort frames (unknown index = no reply at all), segmented transfers, block transfer, size encoding (reply byte 0 is always 0x43 even for 1-byte data), NMT and heartbeat.
 
@@ -183,26 +183,26 @@ Is it real CANopen? Yes, an expedited-only SDO server subset (CONFIRMED by struc
 
 There is no object for cell voltages, pack data, parameters or firmware version. Pack data is only available from the periodic broadcast frames. Writing any other index, or writing 0x1F51:1 with non-zero data, gets no reply (CONFIRMED).
 
-Write 0x1F51:1 = 0 (wa 00a99a first branch): copies 8 bytes `60 51 1F 01 00 00 00 00` from program memory (PSV 0xC7E0) and sends them on 0x594, writes 0 to C1FEN1 (0x494, disables every CAN1 filter) and sets flag 0x1779 = 1. The main loop (wa 008758..00877a) then runs FUN_rom_005218 (outputs off), sets LATC0 and LATC13 high, logs event 0x0A, runs the log write and FUN_rom_00c10c(0), shuts the peripherals (FUN_rom_006e1a) and jumps to program address 0x013800 (the bootloader reset entry). No password, no key. The pack stops running until the bootloader hands control back. DANGEROUS: avoid in a driver.
+Write 0x1F51:1 = 0 (wa 00a99a first branch): copies 8 bytes `60 51 1F 01 00 00 00 00` from program memory (PSV 0xC7E0) and sends them on 0x594, writes 0 to C1FEN1 (0x494, disables every CAN11 filter) and sets flag 0x1779 = 1. The main loop (wa 008758..00877a) then runs FUN_rom_005218 (outputs off), sets LATC0 and LATC13 high, logs event 0x0A, runs the log write and FUN_rom_00c10c(0), shuts the peripherals (FUN_rom_006e1a) and jumps to program address 0x013800 (the bootloader reset entry). No password, no key. The pack stops running until the bootloader hands control back. DANGEROUS: avoid in a driver.
 
 ## 6. Worked examples
 
-All CAN2 frames are 29-bit extended, 500 kbit/s. Data bytes in hex.
+All CAN frames are 29-bit extended, 500 kbit/s. Data bytes in hex.
 
 | Goal | Bus / ID | Data | Expected reply |
 |---|---|---|---|
-| Set balancing start 40 mV, stop 10 mV, floor 3800 mV (0x0ED8) | CAN2 0x0CFF00F3 | C3 00 28 0A D8 0E 27 F1 | none (RAM only). Pack is now in service mode. |
-| Leave service mode | CAN2 0x0CFF00F3 | 00 00 00 00 00 00 00 00 | none; 0x0CFF20F3 byte 0 leaves 4 |
-| Set current scale to 10000 (1.0000) | CAN2 0x0CFF00F3 | EC 00 00 00 10 27 EF D8 | 0x18FF50F3 with byte 7 = 0C |
-| Set cell limit 4150 mV (0x1036) | CAN2 0x0CFF00F3 | C4 00 00 00 36 10 C9 EF | 0x18FF50F3 byte 7 = 0F |
-| Set precharge threshold 70 percent, word 3000 (0x0BB8) | CAN2 0x0CFF00F3 | C5 00 46 B9 B8 0B 47 F4 | 0x18FF50F3 byte 7 = 0D |
-| Select model 2 (only on a nearly new pack) | CAN2 0x0CFF00F3 | D3 00 00 00 02 FD 00 00 | 0x18FF50F3 byte 7 = 14 |
-| Clear latched permanent fault | CAN2 0x0CFF00F3 | CF 00 00 00 00 00 00 00 | 0x18FF50F3 byte 7 = 11 |
-| Read log index | CAN2 0x0CFF00F3 | C9 00 00 00 00 00 00 00 | 0x18FF51F3, bytes 0-3 = last record number (LE) |
-| Dump record 5 | CAN2 0x0CFF00F3 | CB 05 00 00 00 00 00 00 | 0x18FF52F3 first frame, then 36 frames with byte 0 = 1..36 |
-| Read vendor ID over CAN1 | CAN1 0x614 | 40 18 10 01 00 00 00 00 | CAN1 0x594, DLC 8: 43 18 10 01 01 00 00 00 |
-| Read identity serial | CAN1 0x614 | 40 18 10 04 00 00 00 00 | 0x594: 43 18 10 04 4E 61 BC 00 |
-| Reboot into bootloader (do not use casually) | CAN1 0x614 | 23 51 1F 01 00 00 00 00 | 0x594: 60 51 1F 01 00 00 00 00, then the pack stops responding |
+| Set balancing start 40 mV, stop 10 mV, floor 3800 mV (0x0ED8) | CAN 0x0CFF00F3 | C3 00 28 0A D8 0E 27 F1 | none (RAM only). Pack is now in service mode. |
+| Leave service mode | CAN 0x0CFF00F3 | 00 00 00 00 00 00 00 00 | none; 0x0CFF20F3 byte 0 leaves 4 |
+| Set current scale to 10000 (1.0000) | CAN 0x0CFF00F3 | EC 00 00 00 10 27 EF D8 | 0x18FF50F3 with byte 7 = 0C |
+| Set cell limit 4150 mV (0x1036) | CAN 0x0CFF00F3 | C4 00 00 00 36 10 C9 EF | 0x18FF50F3 byte 7 = 0F |
+| Set precharge threshold 70 percent, word 3000 (0x0BB8) | CAN 0x0CFF00F3 | C5 00 46 B9 B8 0B 47 F4 | 0x18FF50F3 byte 7 = 0D |
+| Select model 2 (only on a nearly new pack) | CAN 0x0CFF00F3 | D3 00 00 00 02 FD 00 00 | 0x18FF50F3 byte 7 = 14 |
+| Clear latched permanent fault | CAN 0x0CFF00F3 | CF 00 00 00 00 00 00 00 | 0x18FF50F3 byte 7 = 11 |
+| Read log index | CAN 0x0CFF00F3 | C9 00 00 00 00 00 00 00 | 0x18FF51F3, bytes 0-3 = last record number (LE) |
+| Dump record 5 | CAN 0x0CFF00F3 | CB 05 00 00 00 00 00 00 | 0x18FF52F3 first frame, then 36 frames with byte 0 = 1..36 |
+| Read vendor ID over CAN11 | CAN11 0x614 | 40 18 10 01 00 00 00 00 | CAN11 0x594, DLC 8: 43 18 10 01 01 00 00 00 |
+| Read identity serial | CAN11 0x614 | 40 18 10 04 00 00 00 00 | 0x594: 43 18 10 04 4E 61 BC 00 |
+| Reboot into bootloader (do not use casually) | CAN11 0x614 | 23 51 1F 01 00 00 00 00 | 0x594: 60 51 1F 01 00 00 00 00, then the pack stops responding |
 
 There is no frame that reads cell voltages on request: use the periodic transmissions.
 
@@ -212,7 +212,7 @@ There is no frame that reads cell voltages on request: use the periodic transmis
 CONFIRMED: FUN_rom_005534 (called every main-loop pass, wa 005534..005658) debounces four active-low port-B inputs into byte-flags in 0x1676: RB13 -> 0x80, RB11 -> 0x40, RB12 -> 0x20 (set in state 4), RB14 -> 0x10. FUN_rom_004e94 (the closing sequence for state 4) returns to state 1 and aborts when 0x1676 bit 0x20 is clear or 0x1625 bit 3 is set (wa 004e94 first lines). Mapping of these pins to the labelled connector inputs is INFERRED only: RB12 (bit 0x20, needed for the charge-state closing sequence) is most likely cen; RB13 (0x80) most likely den; RB11/RB14 (0x40, 0x10) the estp/other lines. A pin trace is required to confirm.
 
 What the commands do relative to these inputs:
-* No CAN command reads, overrides or emulates den, cen or estp. Setting them by CAN is impossible; the pack still needs the physical inputs (and CAN1 0x105 bits) to close contactors. CONFIRMED (no write to 0x1676 anywhere in the receive path).
+* No CAN command reads, overrides or emulates den, cen or estp. Setting them by CAN is impossible; the pack still needs the physical inputs (and CAN11 0x105 bits) to close contactors. CONFIRMED (no write to 0x1676 anywhere in the receive path).
 * Cmd 0x00 and every other 0x0CFF00F3 frame act below those inputs: any 0x0CFF00F3 frame forces state 8, which stops the closing sequences so the relay drives stay off even if den/cen are asserted; only 0x00 (or a fault reset) returns control to the input-driven logic. CONFIRMED logic. INFERRED mapping: LATD4 = srelay (main), LATD15 = Prelay (precharge), based on 4e94 state 4 raising LATD4 after LATD15 is dropped, and on the precharge-ratio test using 0x1cbe (cmd 0xC5).
 * The fault/alarm outputs (fatout, alout) are not touched by the command interpreter. 0x1686 (fault word) non-zero is what the periodic frames report; cmd 0xCF clears only the latched word 0x1688. Which port pins drive fatout/alout was not traced (open question).
 * Cmds 0xDC and 0xDE clear LATD12 and LATC13/LATC0, which are re-asserted every pass by FUN_rom_006124 together with the 12 V-related outputs; likely candidates are the switched 12 V output (12vout) and the contactor 12 V supply, INFERRED, unverified.

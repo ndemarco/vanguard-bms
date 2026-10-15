@@ -1,4 +1,4 @@
-"""CAN1 decoder tests: payloads are built by hand from CANBUS_PROTOCOL.md section 4."""
+"""CAN11 decoder tests: payloads are built by hand from CANBUS_PROTOCOL.md section 4."""
 
 import pytest
 
@@ -207,7 +207,7 @@ def test_sdo_bootloader_write_flagged():
 def test_unknown_ids_return_none():
     assert decode(1, 0x7FF, bytes(8)) is None
     assert decode(1, 0x105 | 0x10000, bytes(8)) is None
-    assert decode(2, 0x111, bytes(8)) is None  # CAN1 ID on CAN2
+    assert decode(2, 0x111, bytes(8)) is None  # CAN11 ID on CAN
     assert decode(3, 0x111, bytes(8)) is None
     assert decode(2, 0x18FF99F3, bytes(8)) is None
     assert decode(1, 0x111, None) is None

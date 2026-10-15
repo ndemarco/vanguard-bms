@@ -124,7 +124,7 @@ FAULT_BITS = (
     (5, 7, "persistent_store_fatal_event", "C", True),
 )
 
-# bit -> name for the CAN2 0x18FF08F3 words (section 6.4). Bit positions [C], names [I].
+# bit -> name for the CAN 0x18FF08F3 words (section 6.4). Bit positions [C], names [I].
 LATCHED_WORD_BITS = {
     0: "cell_undervoltage",
     1: "temperature_out_of_window",
@@ -159,7 +159,7 @@ LOG_EVENT_CODES = {
 SLEEP_CMD = {0: "none", 1: "light_sleep", 2: "deep_shutdown", 3: "light_sleep"}
 
 # ---------------------------------------------------------------------------
-# CAN1 (11-bit, big-endian)
+# CAN11 (11-bit, big-endian)
 # ---------------------------------------------------------------------------
 
 _CAN1_HOST_NOTE_BITS = "D0 bit-to-output order is unverified: signals are named by D0 bit"
@@ -271,7 +271,7 @@ CAN1_SPECS = (
 )
 
 # ---------------------------------------------------------------------------
-# CAN2 (29-bit, little-endian). Listed in the firmware scheduler order (can2tx.md).
+# CAN (29-bit, little-endian). Listed in the firmware scheduler order (can2tx.md).
 # ---------------------------------------------------------------------------
 
 _cell = lambda n, off: _c2(f"cell{n}_mv", off, 2, unit="mV")  # noqa: E731

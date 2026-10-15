@@ -208,7 +208,7 @@ def _maintenance(data: bytes, notes: list) -> list:
     return sigs
 
 
-# 0x18FF50F3 is also used for CAN1 error patterns; no byte discriminates (doc 5.2).
+# 0x18FF50F3 is also used for CAN11 error patterns; no byte discriminates (doc 5.2).
 _CAN1_ERROR_PATTERNS = {
     bytes([1, 0] * 4): "bus_off",
     bytes([2] * 8): "transmit_bus_passive",

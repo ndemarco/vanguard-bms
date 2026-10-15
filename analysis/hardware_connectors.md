@@ -8,8 +8,8 @@ External connector (15 pins; some functions also used internally):
 | 1 | reset | MCU/board reset input |
 | 2 | en12v | enable of the 12 V supply (wake-up input) |
 | 3 | den | discharge enable input |
-| 4 | can11h | CAN1 high (11-bit bus) |
-| 5 | canh | CAN2 high (29-bit bus) |
+| 4 | can11h | CAN11 high (11-bit bus) |
+| 5 | canh | CAN high (29-bit bus) |
 | 6 | fuout | output, meaning unknown (fuel gauge? fuse?) |
 | 7 | fatout | fault output |
 | 8 | 12vout | switched 12 V output |
@@ -17,8 +17,8 @@ External connector (15 pins; some functions also used internally):
 | 10 | estp | emergency stop input |
 | 11 | 5v | 5 V |
 | 12 | cen | charge enable input |
-| 13 | can11l | CAN1 low |
-| 14 | canl | CAN2 low |
+| 13 | can11l | CAN11 low |
+| 14 | canl | CAN low |
 | 15 | alout gnd | alarm output / ground |
 
 Contactor solenoid connector: 1 Prelay, 2 12V, 3 12V, 4 srelay. Owner correction: the two contactors are redundant and wired in series (a weld in one is cleared by the other); neither is a precharge relay. Precharge is the separate firmware output RD4, not on this connector.
@@ -28,7 +28,7 @@ Three connectors: module voltage lines labeled C0-C14, plus one NC (not connecte
 Cell monitor chip printed "MC3371BSP1" = NXP MC33771B (owner confirmed).
 
 ## Pack serial number format (owner report, 2026-10-11)
-The first pack's serial is 12 digits. The first six read as a YYMMDD date code (211229, that is 2021-12-29) [I]; the last six look like a sequence number and are withheld. The BMS stores the serial in CAN1 `0x510` (bench-confirmed 2026-10-11): B5-B7 = 211229 as a u24, B0-B3 most likely the sequence number as a u32 [I, owner to confirm]; see CANBUS_PROTOCOL.md section 4.2. A second pack's serial will be added for comparison.
+The first pack's serial is 12 digits. The first six read as a YYMMDD date code (211229, that is 2021-12-29) [I]; the last six look like a sequence number and are withheld. The BMS stores the serial in CAN11 `0x510` (bench-confirmed 2026-10-11): B5-B7 = 211229 as a u24, B0-B3 most likely the sequence number as a u32 [I, owner to confirm]; see CANBUS_PROTOCOL.md section 4.2. A second pack's serial will be added for comparison.
 
 ## Main power terminals (B+ / B-)
 Owner identified the pack's high-current terminals as Rebling 250 A LFT-style lithium battery terminals: https://www.rebling.com/products/lithium-battery-terminals/250-amp-lft-style-lithium-battery-terminal
@@ -102,7 +102,7 @@ Hypothesis (revised after the Club Car diagnostic screen, see Appendix C of `CAN
 INFERRED correspondences with board labels: gnd = B; en12v/key = C or T/S; 12vout = D; cen = K (charger wake) ; canh/canl = V/U (one bus only appears on this connector).
 
 ## Bench results (2026-10-11, bench-confirmed)
-- Input mapping: tying `estp` to B- sets CAN1 `0x113` B2 bit 1 (RB14); tying `en12v` to B- sets B2 bit 0 (RB13). So estp = RB14 and en12v = RB13, active low. This corrects the earlier guess in `analysis/core.md` that RB12 = en12v. `den` and `cen` are therefore the candidates for RB11/RB12.
+- Input mapping: tying `estp` to B- sets CAN11 `0x113` B2 bit 1 (RB14); tying `en12v` to B- sets B2 bit 0 (RB13). So estp = RB14 and en12v = RB13, active low. This corrects the earlier guess in `analysis/core.md` that RB12 = en12v. `den` and `cen` are therefore the candidates for RB11/RB12.
 - `12vout` measures 12 V with respect to B- with nothing external connected except `estp` and `en12v` tied to B-: the pack generates it, so `12vout` is a true output. This resolves the open question above about the 12 V source. Pin 11 (plain `12V`) of the circular connector also measures 12 V.
 - Known-good enable configuration (contactors closed under `0x105` keep-alives): `estp` and `en12v` tied to B-, `den` at 12 V through the permanent green jumper joining cavities 11 and 13, `cen` and `alout` unconnected. This does not show that each of the three is required for the enable (RB12); that is not isolated yet.
 - Details of the run are in Appendix D of `CANBUS_PROTOCOL.md`.

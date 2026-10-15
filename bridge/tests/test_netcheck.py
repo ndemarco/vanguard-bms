@@ -251,14 +251,14 @@ def test_netsetup_stops_on_command_failure(tmp_path):
     assert len(executed) == 1
 
 
-# ---------------------------------------------- pack CAN2 channel bitrate (e.g. a 125 kbit/s charger bus)
+# ---------------------------------------------- pack CAN channel bitrate (e.g. a 125 kbit/s charger bus)
 
 def test_can2_bitrate_defaults_to_500k_and_is_configurable():
     from dataclasses import replace
     assert CFG.can2_bitrate == 500_000
     cmds = [c for c, _ in netsetup.commands(replace(CFG, can2_bitrate=125_000))]
     assert ["ip", "link", "set", "dev", "can1", "type", "can", "bitrate", "125000", "listen-only", "on"] in cmds
-    assert ["ip", "link", "set", "dev", "can0", "type", "can", "bitrate", "500000", "listen-only", "off"] in cmds  # pack CAN1 unchanged
+    assert ["ip", "link", "set", "dev", "can0", "type", "can", "bitrate", "500000", "listen-only", "off"] in cmds  # pack CAN11 unchanged
 
 
 def test_check_link_uses_the_given_bitrate():

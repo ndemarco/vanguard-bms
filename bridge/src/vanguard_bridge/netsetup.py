@@ -23,12 +23,12 @@ Commands per interface (shown for the shipped config; ``--dry-run`` prints them)
     tc filter add dev can1 parent 1: protocol all prio 1 basic action drop
     ip link set dev can1 up
 
-Pack CAN1 uses three ``u32`` filters (netcheck.CAN1_U32_RULES): two that let the exact
+Pack CAN11 uses three ``u32`` filters (netcheck.CAN1_U32_RULES): two that let the exact
 0x105 and 0x515 frames through (ID word, length and payload bytes are matched on the raw
 ``struct can_frame``) and one that drops everything else. Raspberry Pi kernels do not ship
 the ``em_canid`` ematch, so the ID is matched byte-wise. The u32 values are the little-endian
 memory bytes of the struct, so this setup refuses to run on a big-endian host. A ``basic``
-filter without ``match`` matches every packet (pack CAN2: drop all).
+filter without ``match`` matches every packet (pack CAN: drop all).
 After setup the same checks as the bridge's startup check run; any failure exits 1.
 """
 
@@ -42,7 +42,7 @@ from . import config as config_mod
 from .config import BITRATE, Config
 from .netcheck import CAN1_U32_RULES, check_all, run_cmd, spi_device_of
 
-# One frame. With no ACK on pack CAN1 the controller retries its current frame forever and
+# One frame. With no ACK on pack CAN11 the controller retries its current frame forever and
 # the queue fills; a deep queue would hold stale keep-alives that burst out when the pack is
 # reconnected. The bridge exits on any TX error, and ExecStartPre re-runs this setup, whose
 # down/up discards the queue and the controller's TX buffer.
@@ -50,7 +50,7 @@ TXQUEUELEN = 1
 
 
 def _can1_filters() -> list:
-    """The ``tc filter add`` tails for pack CAN1, one per rule, from the table the checker uses."""
+    """The ``tc filter add`` tails for pack CAN11, one per rule, from the table the checker uses."""
     if sys.byteorder != "little":
         raise RuntimeError("the CAN1 u32 filter values assume a little-endian host")
     out = []

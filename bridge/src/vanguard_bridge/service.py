@@ -46,14 +46,14 @@ MAX_CLIENT_READ_PER_STEP = 64 * 1024
 
 
 PACK_SOURCE_ADDRESS = 0xF3
-# 11-bit IDs the pack itself transmits on CAN1 (from vanguard's frame tables).
+# 11-bit IDs the pack itself transmits on CAN11 (from vanguard's frame tables).
 PACK_CAN1_TX_IDS = frozenset(s.can_id for s in CAN1_SPECS if s.bus == CAN1 and s.direction == PACK_TX)
 
 
 def wiring_swap_evidence(bus: int, f: RxFrame) -> Optional[str]:
     """A frame only the pack sends, seen on the wrong socket: the wiring is swapped.
 
-    Other nodes' frames (a stray J1939 frame on CAN1, say) and remote frames are ignored.
+    Other nodes' frames (a stray J1939 frame on CAN11, say) and remote frames are ignored.
     """
     if f.err or f.rtr:
         return None
@@ -65,7 +65,7 @@ def wiring_swap_evidence(bus: int, f: RxFrame) -> Optional[str]:
 
 
 def is_pack_can1_evidence(bus: int, f: RxFrame) -> bool:
-    """A frame the pack sends on CAN1, received on the pack CAN1 (TX) interface."""
+    """A frame the pack sends on CAN11, received on the pack CAN11 (TX) interface."""
     return bus == 1 and not (f.err or f.rtr or f.eff) and f.can_id in PACK_CAN1_TX_IDS
 
 

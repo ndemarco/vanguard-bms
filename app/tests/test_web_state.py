@@ -155,7 +155,7 @@ def test_actual_contactor_state_no_data_and_stale():
     assert _top(st, 1.5)["contactors"] == "CLOSED (confirmed)"
     t = _top(st, 1.6)  # 0.6 s old: 0x112 is a 50 ms frame, stale after 0.5 s
     assert t["contactors"] == "NO DATA" and t["contactor_a_on"] is None
-    st2 = PackState()  # CAN2 driver data alone must not count as CAN1 0x112
+    st2 = PackState()  # CAN driver data alone must not count as CAN11 0x112
     st2.update(frame(2, 0x0CF096F3, {"driver_a_on": True, "driver_b_on": True}), 1.0)
     assert _top(st2, 1.1)["contactors"] == "NO DATA"
     st.update(_c112(True, True, output_side_adc_v=52.0, pack_voltage_v=52.3), 2.0)
@@ -211,7 +211,7 @@ def test_comms_lost_blanks_every_value():
         out += v["contactors"]["drivers"] + v["contactors"]["sequence"]
         return out
 
-    for v, why in ((_live(st, 1.6), "no CAN1 0x112 or 0x111 for 0.6 s"), (_live(st, 1.2, connected=False), "bridge disconnected")):
+    for v, why in ((_live(st, 1.6), "no CAN11 0x112 or 0x111 for 0.6 s"), (_live(st, 1.2, connected=False), "bridge disconnected")):
         assert v["comms"] == {"ok": False, "reason": why}
         for it in values(v):
             assert it["blank"] and it["value"] is None and it["raw"] is None, it["key"]
@@ -225,7 +225,7 @@ def test_comms_lost_blanks_every_value():
 def test_stale_signal_blanks_individually():
     st = PackState()
     st.update(frame(1, 0x113, {"soc_pct": 50}), 1.0)  # 100 ms frame: stale after 2 s
-    for t in range(2, 7):  # keep CAN1 comms alive with 0x112/0x111
+    for t in range(2, 7):  # keep CAN11 comms alive with 0x112/0x111
         st.update(_c112(False, False, pack_voltage_v=50.0), float(t))
         st.update(frame(1, 0x111, {}), float(t))
     v = _live(st, 6.1)
@@ -238,7 +238,7 @@ def test_stale_signal_blanks_individually():
 
 def _view(frames, bridge_state="STOPPED"):
     st = PackState()
-    st.update(frame(1, 0x111, {}), 1.0)  # CAN1 comms alive
+    st.update(frame(1, 0x111, {}), 1.0)  # CAN11 comms alive
     for i, f in enumerate(frames):
         st.update(f, 1.0)
     return build_view(state=st, status=StatusLog(), now=1.0, mode="live",
@@ -255,12 +255,12 @@ def test_control_faults_classification_and_tags():
                frame(2, 0x18FF08F3, {"latched_host_timeout": True, "live_low_cell_warning": True})])
     cf = v["control_faults"]
     by = {(i["name"], i["source"].split(" ")[0]): i for i in cf["items"]}
-    assert by[("keepalive_timeout", "CAN1")]["blocking"] and by[("keepalive_timeout", "CAN1")]["wake"]
-    assert not by[("cell_overvoltage_warning", "CAN1")]["blocking"]
-    assert not by[("temperature_spread_warning", "CAN1")]["blocking"]
-    assert by[("overtemperature", "CAN1")]["blocking"] and not by[("overtemperature", "CAN1")]["wake"]
-    assert by[("host_timeout", "CAN2")]["state"] == "latched" and by[("host_timeout", "CAN2")]["blocking"]
-    assert by[("low_cell_warning", "CAN2")]["state"] == "live" and not by[("low_cell_warning", "CAN2")]["blocking"]
+    assert by[("keepalive_timeout", "CAN11")]["blocking"] and by[("keepalive_timeout", "CAN11")]["wake"]
+    assert not by[("cell_overvoltage_warning", "CAN11")]["blocking"]
+    assert not by[("temperature_spread_warning", "CAN11")]["blocking"]
+    assert by[("overtemperature", "CAN11")]["blocking"] and not by[("overtemperature", "CAN11")]["wake"]
+    assert by[("host_timeout", "CAN")]["state"] == "latched" and by[("host_timeout", "CAN")]["blocking"]
+    assert by[("low_cell_warning", "CAN")]["state"] == "live" and not by[("low_cell_warning", "CAN")]["blocking"]
     assert cf["blocking_count"] == 3 and cf["count"] == 6
 
 

@@ -5,43 +5,13 @@ Waveshare 2-CH CAN FD HAT (two MCP2518FD). It owns both pack CAN buses, sends th
 exactly one controlling client (the web app, step 3) over a Unix socket with a line-based
 ASCII protocol. It is the safety core of the project: it decides what reaches the pack.
 
-The pack protocol is in `../CANBUS_PROTOCOL.md`. **Nothing here has been run against a live
-pack or on the Pi yet.** Everything marked "verify on the Pi" below must be checked before the
+The pack protocol is in `../CANBUS_PROTOCOL.md`. Everything marked "verify on the Pi" below must be checked before the
 pack is connected.
 
 ## Safety design
 
-| Rule | Where it is enforced |
-|---|---|
-| Power-on state is STOPPED; nothing is sent until `START` | `core.py` `Bridge.__init__`, `Bridge._start` |
-| Transmit allowlist, checked on the exact 16 bytes written, independent of the state machine | `txgate.py` `check_tx`, called by `TxGate.send` (the only CAN write in the package) |
-| Refused transmit forces STOPPED; failed transmit forces STOPPED and exits (status 3) so the restart flushes the CAN queue | `core.py` `Bridge._on_refused`, `Bridge._on_failed`; `service.py` `Service._fail`; `system/vanguard-bridge.service` `ExecStartPre` |
-| A frame only the pack sends, seen on the wrong interface (wiring swapped): STOPPED, `START` refused until a new client connects | `service.py` `wiring_swap_evidence`, `Service.step`; `core.py` `Bridge.latch_wiring_fault`, `Bridge.connect` |
-| CAN socket error (for example interface down): STOPPED, exit 3 | `canio.py` `CanReceiver.read_frames`; `service.py` `Service.step` |
-| Heartbeats that waited in the socket during a loop stall cannot extend the keep-alive | `service.py` `Service._read_client` |
-| Pack CAN2 has no send path | `canio.py` `Can2ReceiveOnly`, `open_pack_can2`; `simlink.py` `SimCan2Socket` |
-| Keep-alive every 100 ms, 1 s watchdog fed only by `HB` / `START` | `core.py` `Bridge._tick` |
-| Client disconnect, slow client, internal error, SIGTERM: STOPPED | `core.py` `Bridge.disconnect`, `Bridge._fail_closed`; `service.py` `Service._drop_client`, `Service.run` |
-| `CLEAR` once per 100 ms, single-shot D1 = 0x13 | `core.py` `Bridge._clear`, `Bridge._tick` |
-| `SLEEP 1` / `SLEEP 3` only while STOPPED | `core.py` `Bridge._sleep` |
-| `START` and `SLEEP` need positive evidence: a pack CAN1 frame on the TX interface within 250 ms and no wiring latch | `core.py` `Bridge._transmit_permission`, `Bridge.note_pack_can1_frame`; `service.py` `is_pack_can1_evidence`, `Service.step` (receivers are read before client input) |
-| OS layer: pack CAN1 egress filter (only 0x105 and 0x515), pack CAN2 listen-only plus drop-all filter | `netsetup.py` `commands` |
-| Bridge refuses to start (exit 2), or stops and exits (exit 3) while running, without those guards; the periodic check runs in a thread | `netcheck.py` `check_all`; `service.py` `main`, `BackgroundChecker`, `Service.step` |
-| No GPIO: the hardware enable input is not driven | no GPIO code exists |
-
-The transmit allowlist: standard 11-bit frames only, DLC 8, no remote (RTR) or error flag,
-padding bytes zero, and either
-
-* `0x105` with D0 in {`0x00`, `0x01`}, D1 in {`0x11`, `0x13`}, D2..D7 = 0, or
-* `0x515` with D0 in {`0x10`, `0x30`}, D1..D7 = 0.
-
-So `0x105` D0 bits 2/4/6 (vehicle load outputs) and D1 bit 2 (20-minute timeout) can never
-be set, `0x515` deep shutdown (D0 = `0x20`) is impossible, and so are `0x614` (bootloader
-reboot) and every extended ID (the CAN2 maintenance channel). A refused frame is reported
-with `S TXREFUSED` and forces STOPPED.
-
-If the bridge crashes or is killed, it stops sending `0x105` and the pack opens its contactors
-within about 1 s on its own. systemd restarts the bridge, which comes back STOPPED.
+The safety rules, the file and function enforcing each, and the transmit allowlist are in
+[`../docs/safety.md`](../docs/safety.md).
 
 ## Client protocol
 
@@ -57,13 +27,13 @@ and reported once. Bytes outside 0x20..0x7E are rejected.
 
 | Line | Accepted when | Effect |
 |---|---|---|
-| `START DISCHARGE` / `START CHARGE` | STOPPED, pack CAN1 traffic seen (see below) | enter RUNNING; first `0x105` at once, then every 100 ms; D0 = `0x00` (discharge) or `0x01` (charge), D1 = `0x11`. Feeds the watchdog |
-| same `START` again | RUNNING in that mode, pack CAN1 traffic seen | feeds the watchdog; refused (and not counted as a heartbeat) when no pack CAN1 traffic was seen in the last 250 ms, so clients should use `HB` as the heartbeat |
+| `START DISCHARGE` / `START CHARGE` | STOPPED, pack CAN11 traffic seen (see below) | enter RUNNING; first `0x105` at once, then every 100 ms; D0 = `0x00` (discharge) or `0x01` (charge), D1 = `0x11`. Feeds the watchdog |
+| same `START` again | RUNNING in that mode, pack CAN11 traffic seen | feeds the watchdog; refused (and not counted as a heartbeat) when no pack CAN11 traffic was seen in the last 250 ms, so clients should use `HB` as the heartbeat |
 | `START` of the other mode | RUNNING | refused (`STOP` first) |
 | `HB` | any time | feeds the watchdog while RUNNING; no reply |
 | `STOP` | any time | enter STOPPED; `S OK STOP` |
 | `CLEAR` | RUNNING, at least 100 ms after the last accepted `CLEAR` | next `0x105` carries D1 = `0x13`, then back to `0x11` |
-| `SLEEP 1` / `SLEEP 3` | STOPPED, pack CAN1 traffic seen, at least 1.5 s after the last `0x105` was sent, at most once per second | one `0x515` with D0 = `0x10` / `0x30` |
+| `SLEEP 1` / `SLEEP 3` | STOPPED, pack CAN11 traffic seen, at least 1.5 s after the last `0x105` was sent, at most once per second | one `0x515` with D0 = `0x10` / `0x30` |
 
 Anything else, including `SLEEP 2`, gets `S ERR ...` and changes nothing. Errors and
 refused commands never feed the watchdog.
@@ -141,30 +111,30 @@ The mapping is printed to the journal at startup and sent to each client.
 `[pack_can2] guard`:
 
 The bridge also watches the traffic for frames only the pack sends: a 29-bit frame with
-source address `0xF3` on the pack CAN1 interface, or an 11-bit frame with an ID from the
-pack's CAN1 transmit list (`vanguard.frames`, for example `0x111`) on the pack CAN2 interface.
+source address `0xF3` on the pack CAN11 interface, or an 11-bit frame with an ID from the
+pack's CAN11 transmit list (`vanguard.frames`, for example `0x111`) on the pack CAN interface.
 Either means the wiring does not match the config: the bridge enters STOPPED and refuses
 `START` until a new client connects. Remote frames and other nodes' frames are ignored. A
 real swap trips again within about 50 ms of reconnecting, because the pack sends those frames
 every 50 to 100 ms.
 
 Clearing the latch is safe because `START` and `SLEEP` also need positive evidence: within
-the last 250 ms the pack CAN1 interface must have received a standard frame whose ID is in
-the pack's CAN1 transmit list (`0x111`, `0x112`, ... from `vanguard.frames`), and no wiring
+the last 250 ms the pack CAN11 interface must have received a standard frame whose ID is in
+the pack's CAN11 transmit list (`0x111`, `0x112`, ... from `vanguard.frames`), and no wiring
 latch may be set. Otherwise they are refused with
-`S ERR START ... refused: no pack CAN1 traffic seen in the last 250 ms` or
+`S ERR START ... refused: no pack CAN11 traffic seen in the last 250 ms` or
 `S ERR START ... refused: wiring latch (...)`. Each step reads the CAN sockets before the
 client's input, so this step's frames count. This also covers the first moments after the
 bridge starts, before any frame has been read.
 
-Consequence: the bridge cannot wake a pack that is asleep and silent on CAN1, because it
+Consequence: the bridge cannot wake a pack that is asleep and silent on CAN11, because it
 will not send the first `0x105` without seeing pack traffic. Wake the pack by its hardware
-input (key switch or charger wake-up line) first; once it broadcasts on CAN1, `START` works.
+input (key switch or charger wake-up line) first; once it broadcasts on CAN11, `START` works.
 
-* `"listen-only"` (active): the CAN2 controller never transmits and never ACKs.
+* `"listen-only"` (active): the CAN controller never transmits and never ACKs.
 * `"tc-drop-all"` (fallback, commented out): normal mode, so the controller ACKs pack frames;
   the drop-all tc filter is what stops it from sending frames. Use this only if listen-only
-  leaves the pack retransmitting one frame forever (with only the pack and the HAT on CAN2,
+  leaves the pack retransmitting one frame forever (with only the pack and the HAT on CAN,
   nobody ACKs). The drop-all filter is installed in both modes.
 
 ## Install on the Pi
@@ -185,9 +155,9 @@ Raspberry Pi OS bookworm, 64-bit. Run every command on the Pi.
 
    Expect two "MCP2518FD ... successfully initialized" lines and links ending in `spi1.0` and
    `spi0.0` (in either order). The `can0`/`can1` to `spi0.0`/`spi1.0` order differs between boots and between Pis, so `bridge.toml` must match what `ls -l /sys/class/net/can0/device` shows.
-3. Termination: CAN1 and CAN2 are separate buses; fit the HAT's 120 ohm jumper on a channel
+3. Termination: CAN11 and CAN are separate buses; fit the HAT's 120 ohm jumper on a channel
    only if the HAT is at one end of that bus (with only the pack and the HAT, it is).
-4. Decide the wiring (which HAT terminal goes to pack CAN1, which to pack CAN2), then install
+4. Decide the wiring (which HAT terminal goes to pack CAN11, which to pack CAN), then install
    the config and edit it to match:
 
        sudo install -d -m 0755 /etc/vanguard-bridge
@@ -232,7 +202,7 @@ Raspberry Pi OS bookworm, 64-bit. Run every command on the Pi.
 11. Only now connect the pack, and first use `candump -td can0` / `can1` (the right interface
     per your mapping) to confirm the pack's frames arrive on the expected bus.
 
-To change the CAN2 guard later: edit `bridge.toml`, then
+To change the CAN guard later: edit `bridge.toml`, then
 `sudo systemctl restart vanguard-can-setup vanguard-bridge`.
 
 ## Verify on the Pi
@@ -250,9 +220,9 @@ captured; replace it with real output after step A.
     tc qdisc show dev can1
     tc filter show dev can1 parent 1:
 
-Expect `LOWER_UP` and a state other than BUS-OFF / STOPPED / SLEEPING on pack CAN1, `bitrate 500000` on both, `can <LISTEN-ONLY> state` on pack CAN2 only, `qdisc prio 1:
-root` on both, three `u32` filters in chain 0 on pack CAN1 (allow the exact `0x105` and `0x515` frames to class 1:1 for prefs 1 and 2, `gact action drop` for everything else at pref 3; `netcheck.CAN1_U32_RULES`), and a
-`basic` filter with no match and `gact action drop` on pack CAN2. Then copy the outputs over
+Expect `LOWER_UP` and a state other than BUS-OFF / STOPPED / SLEEPING on pack CAN11, `bitrate 500000` on both, `can <LISTEN-ONLY> state` on pack CAN only, `qdisc prio 1:
+root` on both, three `u32` filters in chain 0 on pack CAN11 (allow the exact `0x105` and `0x515` frames to class 1:1 for prefs 1 and 2, `gact action drop` for everything else at pref 3; `netcheck.CAN1_U32_RULES`), and a
+`basic` filter with no match and `gact action drop` on pack CAN. Then copy the outputs over
 `tests/samples/ip_can1_ok.txt`, `ip_can2_listen_only_ok.txt`, `qdisc_prio_ok.txt`,
 `filter_can1_ok.txt` and `filter_can2_dropall_ok.txt` and rerun the tests. If the text differs,
 fix `netcheck.py` before going on.
@@ -267,7 +237,7 @@ from inside the systemd sandbox; if it fails only there, a hardening option in
 `vanguard-bridge.service` is blocking `ip` or `tc`.
 
 **C. Bench test of the tc filters, pack disconnected.** Wire HAT terminal CAN_0 H/L to CAN_1
-H/L, fit both termination jumpers. Pack CAN1 is assumed to be `can0` here.
+H/L, fit both termination jumpers. Pack CAN11 is assumed to be `can0` here.
 
 1. `sudo systemctl stop vanguard-bridge`
 2. Let `can1` ACK for this test: `sudo ip link set can1 down`, then
@@ -281,7 +251,7 @@ H/L, fit both termination jumpers. Pack CAN1 is assumed to be `can0` here.
    `tc -s qdisc show dev can0` rises by one per refused frame.
 6. Remote frames: `cansend can0 105#R` must not appear either. The u32 rule matches the whole ID
    word including the RTR flag, so it is dropped in the kernel as well as refused by the bridge.
-7. Pack CAN2 drop-all: `candump -td can0` in the second terminal, then
+7. Pack CAN drop-all: `candump -td can0` in the second terminal, then
    `cansend can1 0CFF00F3#0000000000000000` and `cansend can1 105#0011000000000000`: neither may appear.
 8. Listen-only: `sudo systemctl restart vanguard-can-setup` (restores listen-only on `can1`),
    then `cansend can0 105#0011000000000000` and `ip -details -statistics link show dev can0`:
@@ -292,21 +262,21 @@ H/L, fit both termination jumpers. Pack CAN1 is assumed to be `can0` here.
 
 **C2. Transmit error and restart (pack connected on the bench, no load on the pack output).**
 Start the bridge, connect a client, `START DISCHARGE` with `HB` every 250 ms. Unplug the
-pack CAN1 lines at the HAT.
+pack CAN11 lines at the HAT.
 
 1. The client receives `S TXERROR ...` and `S STOP transmit failed...` within about 0.1 s,
    and the connection closes.
 2. `journalctl -u vanguard-bridge` shows `FATAL transmit failed`, the exit, `ExecStartPre`
    running the setup, and a fresh start in STOPPED.
-3. In a second terminal start `candump -td <pack CAN1 interface>` (it shows only frames
-   actually sent). Reconnect the pack CAN1 lines. No `0x105` may appear: the pack must open
+3. In a second terminal start `candump -td <pack CAN11 interface>` (it shows only frames
+   actually sent). Reconnect the pack CAN11 lines. No `0x105` may appear: the pack must open
    its contactors and stay open. If any `0x105` appears, the interface down/up does not clear
    the queue on this driver; stop and fix that before using the bridge.
 
 **D. Hardware facts not confirmed from the Waveshare wiki:** which kernel name each controller
 gets (handled by the SPI check), the exact SPI device names (`spi1.0`/`spi0.0`, step 2), that
 the mcp2515 driver accepts `listen-only on` (step A), that `cls_u32`, `cls_basic`, `sch_prio`
-and `act_gact` exist in the Raspberry Pi kernel (`sudo modprobe -a can can_raw sch_prio cls_basic cls_u32 act_gact`; the Pi kernel has no `em_canid`, which is why pack CAN1 uses u32 byte matches),
+and `act_gact` exist in the Raspberry Pi kernel (`sudo modprobe -a can can_raw sch_prio cls_basic cls_u32 act_gact`; the Pi kernel has no `em_canid`, which is why pack CAN11 uses u32 byte matches),
 and that a qdisc added while the interface is down survives `ip link set up` (step A shows it).
 The overlays come from the Waveshare 2-CH CAN FD HAT wiki: SPI0 and SPI1 each with chip select 0, interrupts on
 BCM 25/24, and the overlay lines in `system/config.txt.snippet`.
@@ -316,7 +286,7 @@ BCM 25/24, and the overlay lines in `system/config.txt.snippet`.
 * The tc filter checks the ID word (so EFF, RTR and error frames never match), the length and all
   eight payload bytes, but not the three padding bytes of the `can_frame`. The padding is enforced by
   `txgate.check_tx` alone.
-* If pack CAN1 stops ACKing, the CAN controller retries its current frame forever (error-passive,
+* If pack CAN11 stops ACKing, the CAN controller retries its current frame forever (error-passive,
   not bus-off). The setup uses `txqueuelen 1` (not the wiki's 65536), and the bridge exits on
   the first transmit error so that the restart's interface down/up discards the stuck frames.
   That this down/up really empties the controller's buffer is to be confirmed on the Pi

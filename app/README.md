@@ -3,8 +3,7 @@
 This package is step 1 of the Vanguard battery bridge. It turns raw CAN frames from the
 reverse-engineered 14-cell Li-ion BMS into named, scaled signals, and it simulates a pack so a
 host can be developed without hardware. The protocol is described in `../CANBUS_PROTOCOL.md`.
-Nothing here has been checked against a live pack, so every decoded signal carries the
-document's confidence tag (C confirmed, I inferred, ? unknown) and keeps its raw integer
+Every decoded signal carries the document's confidence tag (C confirmed, I inferred, ? unknown) and keeps its raw integer
 next to the scaled value.
 
 ## Install

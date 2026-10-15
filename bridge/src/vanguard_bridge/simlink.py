@@ -1,9 +1,9 @@
 """``--simulate``: replace the two CAN sockets with an in-process pack simulator.
 
 Only the bottom-most layer changes. :class:`SimCan1Socket` stands in for the pack
-CAN1 ``socket.socket`` (``send`` / ``recv`` of packed 16-byte frames) and is handed
+CAN11 ``socket.socket`` (``send`` / ``recv`` of packed 16-byte frames) and is handed
 to the very same ``TxGate`` and ``Bridge`` code as the real socket.
-:class:`SimCan2Socket` stands in for pack CAN2 and, like the real wrapper, has no
+:class:`SimCan2Socket` stands in for pack CAN and, like the real wrapper, has no
 send method.
 """
 

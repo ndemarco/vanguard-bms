@@ -22,10 +22,10 @@
 | 0x1BF4 | pack variant 0..5 | idx | 00795e,008c22 |
 | 0x1676 | debounced inputs/flags (bit4 RB14,bit5 RB12,bit6 RB11,bit7 RB13, bit2 cell OV) | | 0056a8 |
 | 0x1678/0x1679 | mode / sub-state | | 5bc0 etc |
-| 0x161B/161C/161D | CAN1 0x105 data0/1/3 host request | | 009196 |
+| 0x161B/161C/161D | CAN11 0x105 data0/1/3 host request | | 009196 |
 | 0x1680/1682/1684 | charge warn/discharge warn/or | bits | section 3 |
 | 0x167C/167E/1686 | charge fault/discharge fault/summary | bits | section 3 |
-| 0x1623..0x162A | status bytes (CAN1 0x120) | bits | section 3.3 |
+| 0x1623..0x162A | status bytes (CAN11 0x120) | bits | section 3.3 |
 | 0x1688 | non-volatile event bits (2 over-current, 0x10 cell OV) | | 00cb6e |
 | 0x16A0 | test-mode bits | | 008c22,006508 |
 | 0x17F9/0x17FC | solenoid/outputs state | bits | 004dd4.., 0060c8 |

@@ -2,7 +2,7 @@
 
 The file maps each pack bus to a kernel CAN interface and to the SPI device that
 interface must sit on. The mapping is printed at startup. Nothing assumes that
-kernel ``can0`` is pack CAN1.
+kernel ``can0`` is pack CAN11.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Optional
 
 DEFAULT_PATH = "/etc/vanguard-bridge/bridge.toml"
 BITRATE = 500_000
-CAN2_BITRATES = (125_000, 250_000, 500_000)  # pack CAN2 channel only; pack CAN1 is always BITRATE
+CAN2_BITRATES = (125_000, 250_000, 500_000)  # pack CAN channel only; pack CAN11 is always BITRATE
 CAN2_GUARDS = ("listen-only", "tc-drop-all")
 _IFNAME = re.compile(r"^[A-Za-z0-9_.-]{1,15}$")
 _SPIDEV = re.compile(r"^spi\d+\.\d+$")

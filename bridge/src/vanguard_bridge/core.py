@@ -4,7 +4,7 @@ SAFETY-CRITICAL. Pure logic: no sockets, no clock. Every method takes ``now_us``
 (monotonic microseconds). Frames leave only through the injected
 :class:`~vanguard_bridge.txgate.TxGate`, which re-checks every frame.
 
-Rules implemented here (bridge/README.md has the full list):
+Rules implemented here (docs/safety.md has the full list):
 
 * Power-on state is STOPPED. Nothing is transmitted until ``START``.
 * RUNNING sends ``0x105`` every 100 ms. Only ``HB`` and ``START`` feed the 1 s
@@ -33,7 +33,7 @@ WATCHDOG_US = 1_000_000
 CLEAR_MIN_INTERVAL_US = 100_000
 SLEEP_MIN_INTERVAL_US = 1_000_000
 SLEEP_AFTER_KEEPALIVE_US = 1_500_000  # owner policy: contactors must already be open
-PACK_EVIDENCE_US = 250_000  # START/SLEEP need a pack CAN1 frame on the TX interface this recently
+PACK_EVIDENCE_US = 250_000  # START/SLEEP need a pack CAN11 frame on the TX interface this recently
 STATE_REPORT_US = 1_000_000
 MAX_LINE_BYTES = 64
 
@@ -47,7 +47,7 @@ COMMANDS = frozenset({"START DISCHARGE", "START CHARGE", "STOP", "HB", "CLEAR", 
 
 class Bridge:
     def __init__(self, writer, *, emit: Callable[[str], None], log: Callable[[str], None] = lambda s: None):
-        """``writer``: the pack CAN1 socket (or its simulated stand-in); handed straight to the TxGate."""
+        """``writer``: the pack CAN11 socket (or its simulated stand-in); handed straight to the TxGate."""
         self._emit_fn = emit
         self._log = log
         self._now = 0
@@ -61,7 +61,7 @@ class Bridge:
         self.last_sleep_us: Optional[int] = None
         self.last_keepalive_sent_us: Optional[int] = None
         self.wiring_fault: Optional[str] = None  # latched until the next client connects
-        self.pack_can1_seen_us: Optional[int] = None  # last pack-sent CAN1 frame on the TX interface
+        self.pack_can1_seen_us: Optional[int] = None  # last pack-sent CAN11 frame on the TX interface
         self.fatal: Optional[str] = None  # set when the process must exit (service checks it)
         self.client_connected = False
         self.next_state_report_us = 0
@@ -127,11 +127,11 @@ class Bridge:
         self.force_stop("transmit failed; bridge exits so the CAN queue is flushed")
 
     def note_pack_can1_frame(self, now_us: int) -> None:
-        """The CAN1 (TX) interface received a standard frame from the pack's CAN1 transmit set."""
+        """The CAN11 (TX) interface received a standard frame from the pack's CAN11 transmit set."""
         self.pack_can1_seen_us = now_us
 
     def _transmit_permission(self, now: int) -> Optional[str]:
-        """Positive evidence that the TX interface is wired to pack CAN1; None if START/SLEEP may send."""
+        """Positive evidence that the TX interface is wired to pack CAN11; None if START/SLEEP may send."""
         if self.wiring_fault is not None:
             return f"wiring latch ({self.wiring_fault})"
         if self.pack_can1_seen_us is None or now - self.pack_can1_seen_us > PACK_EVIDENCE_US:

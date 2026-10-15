@@ -1,4 +1,4 @@
-# RAM variables established by the "can1" job (CAN1 transmit and receive)
+# RAM variables established by the "can1" job (CAN11 transmit and receive)
 
 Tag: C = CONFIRMED (read in code), I = INFERRED. "wa" = program word address of evidence. Multiword values are little-endian
 word pairs: the LOW word sits at the lower address (e.g. 0x1706 = low word, 0x1708 = high word).
@@ -7,7 +7,7 @@ word pairs: the LOW word sits at the lower address (e.g. 0x1706 = low word, 0x17
 |---|---|---|---|---|
 | 0x1664 | Free-running millisecond tick, 16-bit, wraps every 65.536 s. Incremented by Timer1 interrupt (PR1=3750, prescaler 1:8, Fcy 30 MHz = 1.000 ms) | ms | wa 010e86 (inc), 010e44 (T1CON=0x8010, PR1=0xEA6, IEC0.T1IE), IVT word 0x1a -> 0x388 | C (Fcy assumes 16 MHz crystal, PLL wa 00fecc) |
 | 0x16ae, 0x16b0 | Main-loop timers: 0x16ae = last slow-pass tick (slow section runs when tick-0x16ae >= 10); 0x16b0 = last transmit-scheduler call (runs when tick-0x16b0 >= 2) | ms | wa 0086fa main loop (008784, 009fe2 caller) | C |
-| 0x1782..0x1790 | CAN1 TX scratch frame: ID 1782, DLC 1788, data[0..7] = 1789..1790 | - | wa 009fd0 | C |
+| 0x1782..0x1790 | CAN11 TX scratch frame: ID 1782, DLC 1788, data[0..7] = 1789..1790 | - | wa 009fd0 | C |
 | 0x1874,187e,187c,187a,1878,185e,1862,1864,186a,186c,186e,1870,1880,1882,1884 | Last-sent tick of frames 0x111,0x120,0x114,0x113,0x112,0x510,0x512,0x513,0x517,0x518,0x519,0x51a,0x51b,0x51c,0x51d | ms | wa 009fe4.., 00a3aa.. | C |
 | 0x13c0:13c2 | Pack current, IEEE float, mA, positive = into the pack (charging / regeneration), negative = discharge. = (0x13dc as float) * 6.0 * float(0x1c70) | mA | wa 00cc00-00cc1c (6.0 = 0x40c00000), main loop 0087fc-008846 (positive branch uses charge efficiency table[0xec]), coil offset 125 mA wa 006b16 | C (mA unit I: 6 mA/LSB fits 0.6 uV LSB of the monitor chip with a 100 uOhm shunt; 125 mA contactor-coil correction; Ah/Wh counter arithmetic) |
 | 0x13d8:13da | Latest current measurement from the monitor chip, signed 32-bit, average of 4 samples | raw counts | wa 00c9a6-00c9b8 | C |
@@ -34,7 +34,7 @@ word pairs: the LOW word sits at the lower address (e.g. 0x1706 = low word, 0x17
 | 0x1c80 | Per-cell charge target voltage, default table[0x54] (4150 / 4200), set to table[0xf8]=3900 or [0x54] by the charge routine. 0x51d bytes 4-5 | mV | wa 010d10-010d18, 005822, 005866 | C |
 | 0x1778 | Charge current limit by temperature in whole amps (interpolated from table 0x1cd8 at temperature 0x19e8-40, divided by 10); 0 outside -11..60 degC or when charge conditions fail; computed only while state 4. 0x113 byte 7 | A | wa 00ad9e, 0057ec (00589e..0058e0) | C (name I) |
 | 0x19e8:19ea | Float temperature used for the charge limit (degC + 40 encoded, converted to byte by FUN_00066e) | degC + 40 | wa 00ada0-00ada8 | C (which sensor I) |
-| 0x1678 | State byte. 1 idle (contactors open), 2 discharge path (entered by 005b2c when min cell >= table[0x6c] 2500 mV), 4 charge path (entered by 00594c; uses charge target 0x1c80 and charge limit 0x1778), 8 CAN2 service mode, 0x10 start-up. Refines glossary_cmd.md, which has 2/4 swapped | enum | wa 005b2c, 00594c, 0057ec, 005930, 006616, 00654c, 1bf0 written 005934/0057f0 | C (charge/discharge naming from the voltage/current-limit logic) |
+| 0x1678 | State byte. 1 idle (contactors open), 2 discharge path (entered by 005b2c when min cell >= table[0x6c] 2500 mV), 4 charge path (entered by 00594c; uses charge target 0x1c80 and charge limit 0x1778), 8 CAN service mode, 0x10 start-up. Refines glossary_cmd.md, which has 2/4 swapped | enum | wa 005b2c, 00594c, 0057ec, 005930, 006616, 00654c, 1bf0 written 005934/0057f0 | C (charge/discharge naming from the voltage/current-limit logic) |
 | 0x1679 | Sub-state: 0 none, 1 entered, 2 contactor-closing sequence running/closed, 8 blocked by fault word. Value 4 is tested but never written | enum | wa 0057ec, 005930, 005bc0, 00594c | C |
 | 0x1622 | Contactor closing/opening step counter (1..6, 0xfe = failed, 0xff) used by 004e94 and 005218 | step | wa 004e94, 005218 | C |
 | 0x1676 | Debounced input/status bits. bit7 = PORTB.13 low, bit6 = PORTB.11 low, bit5 = PORTB.12 low (required for contactor closing), bit4 = PORTB.14 low, bit2 = over-voltage trip latch (set by 00e6ea at cell-OV trip, cleared when max cell stays <= table[0x58] 4050 mV), bit0 cleared at close step | bitmask | wa 0056a8, 00e6ea (00e994), 0057ec | C |
@@ -53,4 +53,4 @@ word pairs: the LOW word sits at the lower address (e.g. 0x1706 = low word, 0x17
 | 0x1716, 0x171a, 0x171c, 0x1718 | Resettable 16-bit charge counters: 0x1716 regen IN, 0x171a charger IN, 0x171c OUT, 0x1718 net = 0x171a+0x1716-0x171c | Ah | wa 006b06, 006df2 | C |
 | 0x1726:1728, 0x172a:172c, 0x172e | Fractional accumulators for the state-4 branch (charge Ah, charge Wh, Ah sub-count). Others: 0x173a/173e/1742 (regen), 0x1730/1734/1738 (discharge) | internal | wa 006b06 | C |
 | 0x1658:165a, 0x165c:165e | Two stored identity numbers (see glossary_cmd.md). 0x510 bytes 0-3 and 4-7 | - | wa 00a6ce-00a724 | C |
-| 0x1d00 table offsets used by CAN1 frames | [0x00] max-temp byte limit 110/105; [0x1c] min-temp byte limit 20; [0x44] max cell mV; [0x6c] min cell mV; [0x8c] pack min mV (35000, 38500 for model 1); [0x90] pack max mV 58800; [0xb4] 240000/320000/403000 mA; [0xc8] 150000/200000/221000 mA; [0xd4] 2400,1500,3200,8008,4290,4576 (meaning unknown); [0xd8] capacity; [0xf4] model code 1,6,7,8,9,10 | see text | wa 00a74c-00a89c, 00a0dc, 00a55a | C |
+| 0x1d00 table offsets used by CAN11 frames | [0x00] max-temp byte limit 110/105; [0x1c] min-temp byte limit 20; [0x44] max cell mV; [0x6c] min cell mV; [0x8c] pack min mV (35000, 38500 for model 1); [0x90] pack max mV 58800; [0xb4] 240000/320000/403000 mA; [0xc8] 150000/200000/221000 mA; [0xd4] 2400,1500,3200,8008,4290,4576 (meaning unknown); [0xd8] capacity; [0xf4] model code 1,6,7,8,9,10 | see text | wa 00a74c-00a89c, 00a0dc, 00a55a | C |

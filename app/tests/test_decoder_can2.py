@@ -1,4 +1,4 @@
-"""CAN2 decoder tests: payloads are built by hand from CANBUS_PROTOCOL.md section 5."""
+"""CAN decoder tests: payloads are built by hand from CANBUS_PROTOCOL.md section 5."""
 
 import struct
 

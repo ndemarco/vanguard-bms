@@ -5,7 +5,7 @@
 > This file is the design for the ESP32-C6 firmware that will sit on each Vanguard pack, and nothing under
 > `firmware/` has been implemented yet. Pick up from here.
 >
-> 1. Read `CLAUDE.md`, then this whole spec, then `CANBUS_PROTOCOL.md` sections 3, 4 and 6 and the safety table in `bridge/README.md`.
+> 1. Read `CLAUDE.md`, then this whole spec, then `CANBUS_PROTOCOL.md` sections 3, 4 and 6 and the safety table in `docs/safety.md`.
 > 2. Start at **phase 0** (section 14.1). Do not skip a phase gate. Phases 0-2 need no owner answers.
 > 3. Python is the reference: `bridge/src/vanguard_bridge/core.py` and `txgate.py` define the safety behaviour the C++
 >    must reproduce; `app/src/vanguard/frames.py` is the only place signal scalings and `[C]/[I]/[?]` tags live.
@@ -40,7 +40,7 @@ battery**, the way a JK-BMS does. Each controller serves its own web page and pu
 Assistant, so each pack can be watched and operated on its own.
 
 ```
- pack A  <-CAN1/CAN2->  ESP32 (master) <-RS485 "link"-> ESP32 (slave)  <-CAN1/CAN2->  pack B
+ pack A  <-CAN11/CAN->  ESP32 (master) <-RS485 "link"-> ESP32 (slave)  <-CAN11/CAN->  pack B
                            |  RS485 "inverter" (Pylon)
                         inverter           Wi-Fi: web + MQTT on both ESP32s
  B+/B- of both packs: one DC bus to the inverter, through the packs' own contactors.
@@ -58,7 +58,7 @@ for it); charging from anything other than the inverter/DC bus.
 | # | Decision | Source |
 |---|---|---|
 | D1 | Target: XIAO ESP32-C6, PlatformIO, VS Code | owner |
-| D2 | Two CAN transceivers (pack CAN1 and CAN2) and two RS485 drivers per board | owner |
+| D2 | Two CAN transceivers (pack CAN11 and CAN) and two RS485 drivers per board | owner |
 | D3 | Both CAN buses are bidirectional in hardware | owner |
 | D4 | One pack = one controller. The master aggregates; there is no multi-pack logic in a pack controller | owner (earlier handoff) |
 | D5 | Inverter protocol: Pylon over RS485 | owner |
@@ -73,9 +73,9 @@ for it); charging from anything other than the inverter/DC bus.
 
 | XIAO pin | GPIO | Function | Notes |
 |---|---|---|---|
-| D0 | 0 | CAN-A TX (to transceiver D) | pack CAN1 (11-bit, 500 kbit/s) |
+| D0 | 0 | CAN-A TX (to transceiver D) | pack CAN11 (11-bit, 500 kbit/s) |
 | D1 | 1 | CAN-A RX (transceiver R) | |
-| D2 | 2 | CAN-B TX | pack CAN2 (29-bit, 500 kbit/s) |
+| D2 | 2 | CAN-B TX | pack CAN (29-bit, 500 kbit/s) |
 | D3 | 21 | CAN-B RX | |
 | D4 | 22 | RS485-L TX (link, inter-pack) | UART1 via GPIO matrix |
 | D5 | 23 | RS485-L RX | |
@@ -99,7 +99,7 @@ Avoid the C6 strapping pins (GPIO 4, 5, 8, 9, 15 are not used for external funct
 * **CAN TXD pull-up.** Put a 10 k pull-up to 3.3 V on each transceiver D input (and use 3.3 V logic on the
   SN65HVD230; it is a 3.3 V part). While the ESP32 is in reset or booting, TXD must read recessive, so a
   resetting controller can never hold a bus dominant. The pack then simply sees silence.
-* **Termination.** Pack CAN1 and CAN2 are point-to-point from the controller to the pack. 120 ohm at each end
+* **Termination.** Pack CAN11 and CAN are point-to-point from the controller to the pack. 120 ohm at each end
   if the pack side is not terminated (unknown [?]; measure resistance across CANH/CANL with power off).
   The SN65HVD230 modules often carry a 120 ohm jumper; leave it fitted on the controller end.
 * **RS485** link: one twisted pair between the two controllers, 120 ohm at both ends, bias resistors at one
@@ -147,7 +147,7 @@ Requirements that do not depend on which pin it is:
   (`esp_driver_twai`, node-based API). Phase 0 tests whether two nodes run at once at 500 kbit/s with
   independent RX/TX GPIOs. If yes: `can2_mode = dual`. If not: `can2_mode = visit` (section 8.4), which needs
   no hardware change. The firmware supports both; the HAL hides which one is in use.
-* **Only classic CAN 2.0** is needed. 11-bit on CAN-A, 29-bit on CAN-B.
+* **Only classic CAN.0** is needed. 11-bit on CAN-A, 29-bit on CAN-B.
 * **Repo layout** (all new, next to `app/` and `bridge/`):
 
 ```
@@ -419,7 +419,7 @@ Derating (all configurable, defaults listed):
 
 ## 8. Pack bus handling details
 
-### 8.1 CAN-A (pack CAN1)
+### 8.1 CAN-A (pack CAN11)
 
 Normal mode 500 kbit/s, standard IDs, hardware acceptance filter set to the pack's ID list (`0x111`..`0x114`,
 `0x120`, `0x510`, `0x512`, `0x513`, `0x517`..`0x51D`, `0x594`). Listen-only is used only before the first
@@ -429,17 +429,17 @@ into a 64-entry queue; the safety task drains it every 10 ms.
 
 ### 8.2 Wiring-swap and sanity checks
 
-CAN-A frames with extended IDs, or CAN-B frames with an ID in the CAN1 set, indicate swapped transceivers:
+CAN-A frames with extended IDs, or CAN-B frames with an ID in the CAN11 set, indicate swapped transceivers:
 `LOCKOUT` (section 5.3). A pack that reports model code different from `config.expected_model` (default any)
 raises an alarm and does not join.
 
-### 8.3 CAN-B (pack CAN2)
+### 8.3 CAN-B (pack CAN)
 
 * Hardware: bidirectional (D3). Firmware v1: **receive only**. The TX path exists in the HAL but its allowlist
   is empty, and the build flag `VGB_ENABLE_CAN2_TX` is 0. With the flag 0, the CAN-B node is created in
   listen-only mode, so even a bug in firmware cannot write the maintenance channel.
 * Why: any frame on `0x0CFF00F3`, including a bad one, drops the pack into service mode and opens the contactors
-  until command `0x00` [C]. CAN2 writes are for commissioning, not for operation.
+  until command `0x00` [C]. CAN writes are for commissioning, not for operation.
 * Planned (phase 6, not before the flag is approved): a `maintenance` mode that is only reachable when the
   pack is `STOPPED`/`HOLD`-off-bus **and** the switch is closed **and** an authenticated owner command was
   received within the last 60 s. Per-command allowlist, one command per 100 ms, each followed by `0x00`
@@ -700,7 +700,7 @@ These decide open points; each result goes into `CANBUS_PROTOCOL.md` with a tag.
 
 Keep the pack firmware image out of the repo (as today). The controller should make a patched pack a drop-in:
 `mode_policy` gets a third value `single` that sends a constant D0; `txgate` and the join policy do not care
-what the pack does internally; the CAN1 `0x1F51:1` bootloader entry is **not** implemented on the ESP32 (the
+what the pack does internally; the CAN11 `0x1F51:1` bootloader entry is **not** implemented on the ESP32 (the
 allowlist forbids `0x614`). Patching is done from the Pi bridge or a separate tool, with the pack off the bus.
 Open work for that day: trace the bootloader's programming protocol (not analysed yet), locate ICSP pads for
 recovery, and decide the patch (hold the contactors across a D0 change, or fold balancing into discharge mode).
@@ -733,7 +733,7 @@ Questions the owner still needs to answer (none blocks phases 0-2):
 
 ## 17. Rules for whoever implements this
 
-* Follow `CLAUDE.md`. Fail-closed everywhere; do not weaken the allowlist, evidence rule, or "CAN2 does not
+* Follow `CLAUDE.md`. Fail-closed everywhere; do not weaken the allowlist, evidence rule, or "CAN does not
   transmit" without explicit owner instruction; those are product rules, not style.
 * Keep `[C]/[I]/[?]` tags in the data model and in every UI/MQTT field. If a value's tag changes, change it in
   `frames.py` first (the generator carries it through).

@@ -1,5 +1,5 @@
 # Install as /etc/systemd/system/vanguard-can-setup.service.
-# Root oneshot: configures both CAN interfaces (500 kbit/s, pack CAN2 listen-only) and
+# Root oneshot: configures both CAN interfaces (500 kbit/s, pack CAN listen-only) and
 # installs the tc egress filters, then verifies them. Interface names and the pack-bus
 # mapping come from /etc/vanguard-bridge/bridge.toml. The device units below name can0 and
 # can1 only because both must exist whatever the mapping is.

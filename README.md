@@ -30,18 +30,18 @@ Every claim in the protocol document carries a tag:
 - **[I]** inferred: reasoned from context or arithmetic. Check it on a bench before trusting it.
 - **[?]** unknown.
 
-**Only CAN1 idle telemetry, the keep-alive and contactor closing have been checked, on a bench on 2026-10-11; the rest is unchecked against a live pack.** The decoder keeps the raw integer next to every scaled
+**Only CAN11 idle telemetry, the keep-alive and contactor closing have been checked, on a bench on 2026-10-11; the rest is unchecked against a live pack.** The decoder keeps the raw integer next to every scaled
 value, and the web page shows the confidence tag next to every signal, so that a wrong guess is visible rather
 than quietly wrong.
 
 ## The interesting parts
 
-- **The pack has two CAN buses that speak differently.** CAN1 uses 11-bit IDs and big-endian payloads; it
-  carries the keep-alive and is the one the golf car talks to. CAN2 uses 29-bit J1939-style IDs and
+- **The pack has two CAN buses that speak differently.** CAN11 uses 11-bit IDs and big-endian payloads; it
+  carries the keep-alive and is the one the golf car talks to. CAN uses 29-bit J1939-style IDs and
   little-endian payloads, with far richer telemetry and a maintenance channel the car never uses.
 - **The pack will not stay connected without a heartbeat.** Frame `0x105` must arrive at least once a second
   or the contactors open. No CAN command closes them by itself; a hardware enable line must also be held.
-- **Some commands are dangerous.** A few CAN2 frames rewrite persistent calibration, and one CAN1 object
+- **Some commands are dangerous.** A few CAN frames rewrite persistent calibration, and one CAN11 object
   reboots the BMS into its bootloader with no password. The bridge makes those impossible to send.
 - **The nameplate and the firmware disagree.** The label says 67.5 Ah; every capacity table in the firmware
   assumes cells of about 3 Ah, which does not fit 32 cells in parallel. The protocol document lays out the
@@ -55,12 +55,12 @@ system, including the person at the keyboard, will eventually make a mistake.
 - It powers up stopped and sends nothing until told to start.
 - It can transmit exactly two frame IDs, with a fixed set of byte patterns, checked on the exact bytes written
   to the socket. The Linux traffic-control layer enforces the same allowlist a second time.
-- CAN2 is listen-only, with a drop-all filter, and has no send path in the code at all.
+- CAN is listen-only, with a drop-all filter, and has no send path in the code at all.
 - It refuses to start without fresh evidence that the pack is actually on the wire it expects, and stops if
   the wiring looks swapped.
 - If it crashes, the heartbeat stops and the pack disconnects itself within about a second.
 
-The full list, with the file and function enforcing each rule, is in [`bridge/README.md`](bridge/README.md).
+The full list, with the file and function enforcing each rule, is in [`docs/safety.md`](docs/safety.md).
 
 ## Trying it without a battery
 

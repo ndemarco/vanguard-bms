@@ -21,7 +21,7 @@ def test_mapping_is_explicit_and_printed():
 
 
 @pytest.mark.parametrize("patch", [
-    {"pack_can1": {"interface": "can0", "spi_device": "spi1.1"}},              # same as CAN2
+    {"pack_can1": {"interface": "can0", "spi_device": "spi1.1"}},              # same as CAN
     {"pack_can1": {"interface": "can0; rm", "spi_device": "spi1.2"}},
     {"pack_can1": {"interface": "can1"}},                                       # spi missing
     {"pack_can2": {"interface": "can0", "spi_device": "spi1.1", "guard": "none"}},

@@ -1,9 +1,9 @@
-# CAN1 (11-bit ID) interface, decoded from the firmware
+# CAN11 (11-bit ID) interface, decoded from the firmware
 
-Scope: every frame the BMS transmits on CAN1, the two receive handlers (0x105, 0x515), and the RAM variables behind each field.
+Scope: every frame the BMS transmits on CAN11, the two receive handlers (0x105, 0x515), and the RAM variables behind each field.
 Tags: CONFIRMED = read directly from code at the quoted program word address ("wa"). INFERRED = reasoned from code
 context, tables or arithmetic; the reasoning is given. Variable addresses are data-space RAM. Companion file:
-`sections/glossary_can1.md` (variable glossary). Some command-channel facts (0x614 / 0x594 / CAN2) are in `sections/cmd.md`.
+`sections/glossary_can1.md` (variable glossary). Some command-channel facts (0x614 / 0x594 / CAN) are in `sections/cmd.md`.
 
 ## 0. Conventions used by every frame
 
@@ -16,7 +16,7 @@ context, tables or arithmetic; the reasoning is given. Variable addresses are da
   * Chain 1, in priority order: 0x111 (50 ms) > 0x51d (1000 ms, only if 0x105 byte1 bit0) > 0x51c > 0x51b > 0x517 > 0x518 > 0x519 (all 1000 ms).
   * Chain 2, in priority order: 0x51a (1000 ms) > 0x120 (100 ms) > 0x114 (100 ms) > 0x113 (100 ms) > 0x112 (50 ms) > 0x510 (1000 ms, gated) > 0x512 (1000 ms, gated) > 0x513 (1000 ms, gated).
   * "gated" = only sent while bit0 of the last received 0x105 byte1 is 1 (RAM 0x161c bit0): wa 00a09a, 00a6b0-00a6b8, 00a740-00a74a, 00a7fa-00a804. After boot, or after a wake from sleep that clears 0x161c (wa 005c76), these four frames are not sent until the host sets that bit.
-* Sleep: before the BMS enters power-save (wa 005c70) it sends **one extra 0x120 frame** (wa 005d28-005d5a builds ID 0x120 from 0x1623..0x162a) and stops all CAN1 traffic. CONFIRMED. Any CAN1 activity can wake it (C1INTE.WAKIE is enabled, `0x48c |= 0x40`, wa 005eb0-005eb2, cleared again after wake wa 005eda-005edc); INFERRED that the wake comes from CAN1 traffic.
+* Sleep: before the BMS enters power-save (wa 005c70) it sends **one extra 0x120 frame** (wa 005d28-005d5a builds ID 0x120 from 0x1623..0x162a) and stops all CAN11 traffic. CONFIRMED. Any CAN11 activity can wake it (C1INTE.WAKIE is enabled, `0x48c |= 0x40`, wa 005eb0-005eb2, cleared again after wake wa 005eda-005edc); INFERRED that the wake comes from CAN11 traffic.
 
 ## 1. Summary table of transmitted frames
 
@@ -135,8 +135,8 @@ Evaluation interval: the counters in wa 00e6ea advance once per run of FUN_rom_0
 
 | Bytes | Field | Encoding | Source | Tag |
 |---|---|---|---|---|
-| B0-B3 | Stored identity number 1 | u32 BE | RAM 0x165a:1658 (loaded from non-volatile block at boot, wa 00795e (008388); written by CAN2 command 0xC6 data[4..7], wa 008ee6-008f1c) | CONFIRMED copy; role "serial / production number" INFERRED (command is only accepted while discharged Ah < 5 x capacity, wa 008e60-008e86) |
-| B4-B7 | Stored identity number 2 | u32 BE, top byte always 0 (24-bit value) | RAM 0x165e:165c (CAN2 command 0xC6 data[1..3]) | same |
+| B0-B3 | Stored identity number 1 | u32 BE | RAM 0x165a:1658 (loaded from non-volatile block at boot, wa 00795e (008388); written by CAN command 0xC6 data[4..7], wa 008ee6-008f1c) | CONFIRMED copy; role "serial / production number" INFERRED (command is only accepted while discharged Ah < 5 x capacity, wa 008e60-008e86) |
+| B4-B7 | Stored identity number 2 | u32 BE, top byte always 0 (24-bit value) | RAM 0x165e:165c (CAN command 0xC6 data[1..3]) | same |
 
 ### 2.7 ID 0x512, every 1000 ms (gated) (wa 00a74c-00a7ec)
 
@@ -212,7 +212,7 @@ Tags: byte layout CONFIRMED; the words "charger" (state 4) and "regeneration" (n
 
 ## 3. Receive handlers
 
-Dispatch (CONFIRMED, wa 009284): the CAN1 receive FIFO is read by FUN_rom_00e106 into RAM 0x1792 (ID) and data bytes D0..D7 = 0x1799..0x17a0. The three hardware filters have zero masks, so every standard frame reaches software; ID == 0x105 calls FUN_rom_009196, ID == 0x515 calls FUN_rom_0091f0, an ID with (id & 0x7f) == 0x14 and (id & 0x780) == 0x600 (0x614 and other function codes for node 0x14) is the service channel (wa 00a99a). Everything else is dropped. **Neither handler tests the DLC**, so a short frame leaves the missing bytes holding stale data from earlier frames. A receive-buffer overflow flag (C1INTF bit 2) causes a CAN1 re-initialisation (wa 00e106 -> wa 00aac4).
+Dispatch (CONFIRMED, wa 009284): the CAN11 receive FIFO is read by FUN_rom_00e106 into RAM 0x1792 (ID) and data bytes D0..D7 = 0x1799..0x17a0. The three hardware filters have zero masks, so every standard frame reaches software; ID == 0x105 calls FUN_rom_009196, ID == 0x515 calls FUN_rom_0091f0, an ID with (id & 0x7f) == 0x14 and (id & 0x780) == 0x600 (0x614 and other function codes for node 0x14) is the service channel (wa 00a99a). Everything else is dropped. **Neither handler tests the DLC**, so a short frame leaves the missing bytes holding stale data from earlier frames. A receive-buffer overflow flag (C1INTF bit 2) causes a CAN11 re-initialisation (wa 00e106 -> wa 00aac4).
 
 ### 3.1 ID 0x105: host command (the "keep-alive and mode request"), handler wa 009196
 
@@ -237,7 +237,7 @@ Send it to the pack **at least every 1 s** (every 100 ms is a safe rate). Layout
 **Watchdog.** Every 0x105 frame zeroes the 32-bit step counter 0x166a:166c and sets the threshold T (0x1c7c:1c7e) to 100 steps, or to 0x1D4C0 = 120 000 steps if D1 bit2 is set (wa 009196-0091c6). The main loop adds 1 to the counter once per slow pass (every >= 10 ms, wa 0086fa 0088c8-0088f2), so a step is about 10 ms:
 * When the counter exceeds T (default about 1.0 s): every pass, T is reset to 100 and RAM 0x161b is ANDed with 0xAB, which clears D0 bits 2, 4, 6 (the three output pins fall); in state 2 the BMS sets fault word 0x167e |= 0x100 and 0x1624 bit2, in state 4 it sets 0x167c |= 0x100 and 0x1624 bit2, and in both cases calls FUN_rom_00005218 (open the contactors). The mode bits D0 bits 0-1 and the enable D1 bit4 are **not** cleared, but the non-zero fault word keeps the BMS idle (wa 00654c / 006616 test 0x1686 != 0) until the fault is cleared. CONFIRMED code path; "stays idle until cleared" INFERRED (no other clear of 0x167e bit8 found; 0x167c bit8 is cleared in wa 006616).
 * If the counter exceeds T + 30000 (about 301 s with T = 100, about 25 minutes with D1 bit2 set): event code 0x15 and the BMS goes to sleep (FUN_rom_00006142, reason 0x16bc = 0x15). CONFIRMED wa 0088c8-0088e2.
-* A 0x614 service frame sets T = 10000 (wa 009284, the 0x614 branch) but does not reset the counter; CAN2 traffic does not reset it.
+* A 0x614 service frame sets T = 10000 (wa 009284, the 0x614 branch) but does not reset the counter; CAN traffic does not reset it.
 * After boot the counter starts at 0, T = 100: with no 0x105 at all the pack goes to sleep after about 5 minutes. INFERRED from the same code.
 
 ### 3.2 ID 0x515: sleep command, handler wa 0091f0
@@ -252,7 +252,7 @@ There is no timeout for 0x515; it is a one-shot command. Because the hold re-rea
 
 ## 4. Minimal driver recipe (INFERRED from sections 2-3)
 
-1. Listen on CAN1 at 500 kbit/s (assumed). Frames 0x111-0x114, 0x120, 0x517-0x51c arrive without any request.
+1. Listen on CAN11 at 500 kbit/s (assumed). Frames 0x111-0x114, 0x120, 0x517-0x51c arrive without any request.
 2. To make the pack connect, send 0x105 every 100 ms: D0 = 0x00 (discharge/drive) or 0x01 (charge), D1 = 0x11 (enable plus extra frames) or 0x10. Keep D0 bits 2, 4, 6 at 0 unless you want the three aux outputs.
 3. To clear a latched fault, send one 0x105 with D1 bit1 set (D1 = 0x12 or 0x13), then drop the bit.
 4. To power the pack down, stop sending 0x105 (outputs drop in about 1 s) or send 0x515 with D0 = 0x20.

@@ -4,7 +4,7 @@ SAFETY-CRITICAL. Every frame the bridge puts on a CAN bus goes through
 :meth:`TxGate.send`, which checks the exact 16 bytes about to be written with
 :func:`check_tx` and only then calls the socket's ``send``. The check does not
 consult the state machine: it would refuse a bad frame even if ``core.py`` asked
-for it. Only the pack CAN1 socket is ever given to a ``TxGate``; pack CAN2 has no
+for it. Only the pack CAN11 socket is ever given to a ``TxGate``; pack CAN has no
 writer anywhere (``canio.Can2ReceiveOnly``).
 
 Allowed frames (CANBUS_PROTOCOL.md sections 3.1 and 4.1), all standard 11-bit,
@@ -17,7 +17,7 @@ DLC 8, no RTR, no error flag:
   D1..D7 = 0.
 
 Everything else is refused, including ``0x614`` (bootloader reboot object) and
-every extended ID (all CAN2 maintenance frames).
+every extended ID (all CAN maintenance frames).
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ class Writer(Protocol):
 
 
 class TxGate:
-    """Owns the pack CAN1 writer. :meth:`send` is the only code that writes a CAN frame."""
+    """Owns the pack CAN11 writer. :meth:`send` is the only code that writes a CAN frame."""
 
     def __init__(self, writer: Writer, *, on_sent: Callable[[bytes], None],
                  on_refused: Callable[[bytes, str], None], on_failed: Callable[[bytes, str], None]):

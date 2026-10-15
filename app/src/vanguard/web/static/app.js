@@ -92,7 +92,7 @@ function renderStatusLine(d) {
   } else if (b.mode) {
     items.push(h("span", "", b.mode === "simulate" ? "Simulator (no real pack)" : "Real pack (hardware)"));
   }
-  items.push(h("span", "", "frames/s: CAN1 " + d.rates.bus1_rx + ", CAN2 " + d.rates.bus2_rx + ", sent " + d.rates.bus1_tx));
+  items.push(h("span", "", "frames/s: CAN11 " + d.rates.bus1_rx + ", CAN " + d.rates.bus2_rx + ", sent " + d.rates.bus1_tx));
   fill($("statusline"), items);
 }
 
@@ -156,13 +156,13 @@ function card(title, sigs, big, note) {
   rowsFor(sigs, big).forEach((r) => c.appendChild(r));
   return c;
 }
-// Power card in the Pack panel: CAN1 0x112 pack voltage x CAN1 0x111 current, blank when either is stale.
+// Power card in the Pack panel: CAN11 0x112 pack voltage x CAN11 0x111 current, blank when either is stale.
 function powerCard(p) {
   const c = h("div", "card");
   c.appendChild(h("h3", "", "Power"));
   const blank = !p || p.kw === null;
   const r = h("div", "row big" + (blank ? " stale" : ""));
-  r.appendChild(h("div", "lab", "Power (" + ((p && p.source) || "CAN1 0x112 x 0x111") + ")"));
+  r.appendChild(h("div", "lab", "Power (" + ((p && p.source) || "CAN11 0x112 x 0x111") + ")"));
   r.appendChild(h("div", "val", fmtPower(p)));
   r.appendChild(h("div", "meta", blank ? "needs fresh pack voltage and current" : "in = charging, out = discharging"));
   c.appendChild(r);
@@ -196,9 +196,9 @@ function faultTile(f, kind) {
 function renderFaults(d) {
   const f = d.faults;
   const groups = [
-    ["CAN1 0x120", f.can1_0x120, (x) => x.blocking ? "fault" : "warning"],
-    ["CAN2 0x18FF08F3 latched word", f.can2_0x18FF08F3_latched, () => "fault"],
-    ["CAN2 0x18FF08F3 live word", f.can2_0x18FF08F3_live, () => "warning"],
+    ["CAN11 0x120", f.can1_0x120, (x) => x.blocking ? "fault" : "warning"],
+    ["CAN 0x18FF08F3 latched word", f.can2_0x18FF08F3_latched, () => "fault"],
+    ["CAN 0x18FF08F3 live word", f.can2_0x18FF08F3_live, () => "warning"],
   ];
   const all = [];
   groups.forEach(([title, list, kindOf]) => {
@@ -219,7 +219,7 @@ function can2Note(id, what, d) {
   const hide = !d.frames.can2_seen && !showAll;
   const el = $(id);
   el.hidden = !hide;
-  el.textContent = hide ? "No CAN2 frames received (CAN2 may not be connected). " + what + " come only from CAN2, so the grid is hidden." : "";
+  el.textContent = hide ? "No CAN frames received (CAN may not be connected). " + what + " come only from CAN, so the grid is hidden." : "";
   return hide;
 }
 
@@ -286,7 +286,7 @@ function renderLists(d) {
   fill($("host-tx"), rowsFor(d.host_tx));
   const r = d.rates, f = d.frames;
   fill($("rates"), [
-    h("span", "", "CAN1 rx " + r.bus1_rx + " frames/s"), h("span", "", "CAN2 rx " + r.bus2_rx + " frames/s"),
+    h("span", "", "CAN11 rx " + r.bus1_rx + " frames/s"), h("span", "", "CAN rx " + r.bus2_rx + " frames/s"),
     h("span", "", "bridge tx " + r.bus1_tx + " frames/s"), h("span", "", "total frames " + f.total + ", undecoded " + f.unknown),
     h("span", "muted", f.last_frame_age === null ? "no frames yet" : "last frame " + f.last_frame_age + " s ago"),
   ]);

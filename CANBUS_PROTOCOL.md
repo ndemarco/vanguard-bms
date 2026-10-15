@@ -1,7 +1,7 @@
 # Vanguard 14S Li-ion BMS: CAN bus protocol (reverse engineered from firmware)
 
 Status: derived by disassembling the full flash image `DSPIC33EP128GS806.hex`, **obtained from the internet, not extracted from the owner's own packs** (firmware dumping from the physical units has not been done yet). It is assumed to match a Vanguard lithium pack of this family (Club Car Tempo golf car, NMC, 14 series cells, about 51.6 V nominal), but this is unconfirmed: the actual firmware revision burned into the owner's packs could differ, including in ways that silently change the meaning of a byte (e.g. the variant/model-code table in Appendix A) without changing the frame layout around it.
-The image itself is not in this repository. First CAN1 bench results (idle telemetry, keep-alive, contactor closing) were obtained on 2026-10-11 and are listed in Appendix D; CAN2 and most commands are still unchecked against a live pack. Raw bytes read off the live bus in Appendix D are real, bench-measured values; it is the *decode table* applied to them (frame layouts, scalings, and especially the variant table in Appendix A) that rests on the internet-sourced image and is unverified against this pack's actual onboard firmware. Every claim carries a confidence tag:
+The image itself is not in this repository. First CAN11 bench results (idle telemetry, keep-alive, contactor closing) were obtained on 2026-10-11 and are listed in Appendix D; CAN and most commands are still unchecked against a live pack. Raw bytes read off the live bus in Appendix D are real, bench-measured values; it is the *decode table* applied to them (frame layouts, scalings, and especially the variant table in Appendix A) that rests on the internet-sourced image and is unverified against this pack's actual onboard firmware. Every claim carries a confidence tag:
 
 | Tag | Meaning |
 |---|---|
@@ -38,30 +38,30 @@ Cross-checks against the firmware:
    bit rate assumes a 16 MHz crystal. The owner reports the crystal is marked "ECS 16" (ECS is a crystal maker),
    which reads as 16 MHz, though the full part number was not captured [I]. The bootloader and application PLL
    settings both give exactly 500 kbit/s with 16 MHz, which supports it.
-   * **CAN1**: 11-bit IDs, **big-endian** payloads. Carries the vehicle/charger keep-alive (`0x105`),
+   * **CAN11**: 11-bit IDs, **big-endian** payloads. Carries the vehicle/charger keep-alive (`0x105`),
      a sleep command (`0x515`), pack telemetry (`0x111`...`0x51D`) and a CANopen-style service channel
      (`0x614` request, `0x594` reply).
-   * **CAN2**: 29-bit J1939-style IDs, source address `0xF3`, **little-endian** payloads. Carries rich
+   * **CAN**: 29-bit J1939-style IDs, source address `0xF3`, **little-endian** payloads. Carries rich
      telemetry (cell voltages, temperatures, SOC, limits) plus a maintenance command channel (`0x0CFF00F3`).
-     The firmware needs nothing from CAN2 to operate (no keep-alive, no timeout). The owner's working theory is
-     that CAN2 is a configuration/diagnostic bus that is not connected while the pack is in the vehicle, and the
+     The firmware needs nothing from CAN to operate (no keep-alive, no timeout). The owner's working theory is
+     that CAN is a configuration/diagnostic bus that is not connected while the pack is in the vehicle, and the
      firmware is consistent with that [I]. The vehicle-side "CAN main" pins (U/V) are therefore expected to be
-     CAN1, but this has not been checked by continuity.
-2. **The pack will not keep its contactors closed unless it receives CAN1 `0x105` at least once per second**
+     CAN11, but this has not been checked by continuity.
+2. **The pack will not keep its contactors closed unless it receives CAN11 `0x105` at least once per second**
    (section 3.1). It also needs its hardware enable input asserted (section 8). No CAN command closes the contactors.
 3. Pack data (cell voltages, temperatures, SOC, current) is **broadcast periodically**. Nothing is ever
    requested. A listener only needs to receive. The only request/response protocol is the CANopen
-   subset on CAN1 `0x614`/`0x594`, and it serves identity objects only.
-4. Several CAN2 commands write persistent calibration and one CAN1 object reboots into the bootloader without a
+   subset on CAN11 `0x614`/`0x594`, and it serves identity objects only.
+4. Several CAN commands write persistent calibration and one CAN11 object reboots into the bootloader without a
    password (section 7). Do not send commands you do not understand to a pack in service.
-5. Byte order differs between buses: CAN1 is big-endian, CAN2 is little-endian. CAN2 `0x18FF06F3` and
+5. Byte order differs between buses: CAN11 is big-endian, CAN is little-endian. CAN `0x18FF06F3` and
    `0x0CFF06F3` share the PGN `0xFF06` and differ only in priority bits: key on the full 29-bit ID.
 
 ## 2. Hardware context
 
 | Item | Detail |
 |---|---|
-| MCU | Microchip dsPIC33EP128GS806, two ECAN modules (C1 = CAN1, C2 = CAN2) [C] |
+| MCU | Microchip dsPIC33EP128GS806, two ECAN modules (C1 = CAN11, C2 = CAN) [C] |
 | Cell monitor | NXP MC33771B (owner confirmed; printed "MC3371BSP1"), 14 cells, on SPI1 with 5-byte frames, CRC-8 poly 0x2F seed 0x42 [C] |
 | Cells | 14 series groups of 32 parallel NMC cells (owner) |
 | Temperatures | 14 NTC thermistors, read through the monitor chip analog inputs AN0..AN6 and a 2:1 multiplexer [C] |
@@ -82,14 +82,14 @@ Vehicle-side wiring reported by the owner [C as reported, not traced by the auth
 * F (58 VDC MN EN) goes to the key switch input (KSI) of the motor control unit and to the instrument panel. F is an output from the pack to loads, not an input [I].
 * G (58 VDC DISP EN) goes to the Visage unit, Club Car's on-board display and fleet-management computer [I]. G is a feed to the display.
 * F, G and H are independently switched outputs, not taps behind the contactors: the Club Car diagnostic screen shows "Battery Output VCM Power: On" while "Battery Main Contactor State: Open" (Appendix C). They are the three outputs the host drives with `0x105` D0 bits 2, 4, 6 (motor control unit, vehicle control module, DC-DC converter power) [I, medium-high]. Bit-to-pin order is [?]; a meter on F, G, H while toggling each bit settles it (section 10).
-* Input mapping (hypothesis): the diagnostic screen reports exactly two inputs, "Key Switch Input" and "Charger Input", matching the two inputs the firmware reports on CAN1 (RB13, RB14) [I, medium-high]. They are probably vehicle pins C or T (key) and K (charger wake up); which is which is [?]. Bench-confirmed 2026-10-11: RB13 = `en12v` and RB14 = `estp`, so the enable input RB12 and the input RB11 are `den` and `cen` in unknown order [?]. Confidence in section 8.
+* Input mapping (hypothesis): the diagnostic screen reports exactly two inputs, "Key Switch Input" and "Charger Input", matching the two inputs the firmware reports on CAN11 (RB13, RB14) [I, medium-high]. They are probably vehicle pins C or T (key) and K (charger wake up); which is which is [?]. Bench-confirmed 2026-10-11: RB13 = `en12v` and RB14 = `estp`, so the enable input RB12 and the input RB11 are `den` and `cen` in unknown order [?]. Confidence in section 8.
 See `analysis/hardware_connectors.md`.
 
 ## 3. Quick start for a driver
 
-### 3.1 Bring the pack online and keep it online (CAN1)
+### 3.1 Bring the pack online and keep it online (CAN11)
 
-1. Open CAN1 at 500 kbit/s. Listen for `0x111`, `0x112`, `0x113`, `0x114`, `0x120` (they arrive without any request).
+1. Open CAN11 at 500 kbit/s. Listen for `0x111`, `0x112`, `0x113`, `0x114`, `0x120` (they arrive without any request).
 2. Make sure the hardware enable input is asserted [I] (section 8). Without it the contactor sequence never starts. Known-good bench configuration: `estp` and `en12v` tied to B-, `den` at 12 V, `cen` and `alout` unconnected (bench-confirmed 2026-10-11; which of them is required is not isolated). `0x120` B2 bit 3 is a latch, not a live view of the input: it stays set until a clear-faults request (step 5) clears it, so send one before the first enable (bench-confirmed 2026-10-11).
 3. Send `0x105` every 100 ms (8 data bytes, always send DLC 8):
 
@@ -112,24 +112,24 @@ D0 bits 2, 4, 6 drive three auxiliary output pins on the board (`LATD3`, `LATA4`
 labels them "Battery Output MCU Power", "VCM Power" and "DC-DC Power" (switched supplies to the motor control unit, vehicle control module and
 DC-DC converter) [I]; bit order unknown. Keep them 0 on a bench bridge so no vehicle load is powered. D1 bit 2 stretches the keep-alive timeout from about 1 s to about 20 minutes [C].
 
-### 3.2 Read pack data (CAN2 preferred)
+### 3.2 Read pack data (CAN preferred)
 
 | Quantity | Frame | Decode |
 |---|---|---|
-| Cell voltages 1-14 | CAN2 `0x18FF03F3`, `04`, `05`, `06` | u16 LE millivolts, four per frame; `0x18FF06F3` has cells 13-14 then `0xFFFF 0xFFFF` |
-| Pack voltage | CAN2 `0x0CF090F3` bytes 4-5 | u16 LE x 0.05 V (or sum the cells) |
-| Pack current | CAN2 `0x0CF090F3` bytes 6-7 | (u16 LE - 32000) x 0.05 A, positive = charge [I sign] |
-| Temperatures 1-14 | CAN2 `0x0CFF01F3` (1-7), `0x0CFF02F3` (8-14) | byte - 40 = degC, 0 = invalid sensor |
-| SOC | CAN2 `0x0CFF06F3` bytes 0-1 | integer percent (u16 LE) |
-| Max/min cell, indexes | CAN2 `0x0CFF21F3`, `0x0CF10AF3` | see section 5 |
-| Faults and warnings | CAN2 `0x18FF08F3`, CAN1 `0x120` | bit tables in section 6.4 |
-| Contactor state | CAN1 `0x112`, CAN2 `0x0CF096F3` | see sections 4 and 5 |
+| Cell voltages 1-14 | CAN `0x18FF03F3`, `04`, `05`, `06` | u16 LE millivolts, four per frame; `0x18FF06F3` has cells 13-14 then `0xFFFF 0xFFFF` |
+| Pack voltage | CAN `0x0CF090F3` bytes 4-5 | u16 LE x 0.05 V (or sum the cells) |
+| Pack current | CAN `0x0CF090F3` bytes 6-7 | (u16 LE - 32000) x 0.05 A, positive = charge [I sign] |
+| Temperatures 1-14 | CAN `0x0CFF01F3` (1-7), `0x0CFF02F3` (8-14) | byte - 40 = degC, 0 = invalid sensor |
+| SOC | CAN `0x0CFF06F3` bytes 0-1 | integer percent (u16 LE) |
+| Max/min cell, indexes | CAN `0x0CFF21F3`, `0x0CF10AF3` | see section 5 |
+| Faults and warnings | CAN `0x18FF08F3`, CAN11 `0x120` | bit tables in section 6.4 |
+| Contactor state | CAN11 `0x112`, CAN `0x0CF096F3` | see sections 4 and 5 |
 
 Never interpret `0x0CF094F3` bytes 0-3: a firmware defect leaves stale bytes there (section 5.3).
 
-## 4. CAN1 (11-bit IDs, big-endian)
+## 4. CAN11 (11-bit IDs, big-endian)
 
-All CAN1 frames are DLC 8 except the `0x594` reply. Multi-byte values are big-endian. The firmware does not check
+All CAN11 frames are DLC 8 except the `0x594` reply. Multi-byte values are big-endian. The firmware does not check
 the received DLC, so always send 8 bytes. Scheduler granularity is 2 ms, so real periods are the nominal ones plus
 a few ms. The tick assumes the 16 MHz crystal [I].
 
@@ -141,7 +141,7 @@ a few ms. The tick assumes the 16 MHz crystal [I].
 | `0x515` | Sleep command | D0 bits 5:4 non-zero: after 500 ms the pack sleeps. Value 2 = deep shutdown, 1 or 3 = lighter sleep that keeps wake sources. D1..D4 are read but unused. One-shot, no timeout. [C] |
 | `0x614` | CANopen SDO request | Section 4.4. Any `0x614` frame stretches the `0x105` timeout to about 100 s. [C] |
 
-A pack in sleep wakes on CAN1 activity only if SOC is above 4.9 % and the cells are healthy [C].
+A pack in sleep wakes on CAN11 activity only if SOC is above 4.9 % and the cells are healthy [C].
 
 ### 4.2 Frames the pack transmits
 
@@ -209,7 +209,7 @@ Any non-zero byte also sets `0x112` B0 bit 1.
 #### 0x510 / 0x512 / 0x513 / 0x51D (1000 ms, only while `0x105` D1 bit 0 was set)
 | ID | Bytes | Content | Conf |
 |---|---|---|---|
-| `0x510` | B0-B3, B4, B5-B7 | 12-digit pack serial, stored split: B5-B7 = u24 BE decimal date code YYMMDD (bench read `03 39 1D` = 211229, equals the first six digits of the pack label serial, bench-confirmed 2026-10-11); B0-B3 = u32 BE, most likely the remaining six digits (sequence number) [I, owner to confirm against the label]; B4 = 0. Written as `211229` + `<sequence, withheld>`; see analysis/hardware_connectors.md "Pack serial number format". Set by CAN2 command `0xC6` | [C] layout and date code; [I] sequence |
+| `0x510` | B0-B3, B4, B5-B7 | 12-digit pack serial, stored split: B5-B7 = u24 BE decimal date code YYMMDD (bench read `03 39 1D` = 211229, equals the first six digits of the pack label serial, bench-confirmed 2026-10-11); B0-B3 = u32 BE, most likely the remaining six digits (sequence number) [I, owner to confirm against the label]; B4 = 0. Written as `211229` + `<sequence, withheld>`; see analysis/hardware_connectors.md "Pack serial number format". Set by CAN command `0xC6` | [C] layout and date code; [I] sequence |
 | `0x512` | B0-B1, B2-B3, B4-B5, B6-B7 | low cell limit, high cell limit, low pack limit, high pack limit; u16, 10 mV/count. Model 0: 250, 425, 3500, 5880 (bench-confirmed 2026-10-11) | [C] |
 | `0x513` | B0 | capacity, whole Ah (73 for model 0; the pack reported 73 on the bench, 2026-10-11) | [C]/[I] unit |
 | | B1-B2, B3-B4 | two current ratings, 0.1 A/count (model 0: 1500, 2400 = 150 A, 240 A; bench-confirmed values 2026-10-11, role of each still [I]) | [C] values / [I] role |
@@ -234,7 +234,7 @@ Trip counters reset when a new charge starts and wrap at 65535 [I]. Lifetime cou
 "Charger" means positive current while in charge mode; "regeneration" is positive current outside charge mode [I].
 Counter units assume one accumulation pass per 10 ms [I].
 
-### 4.3 CAN1 timing summary
+### 4.3 CAN11 timing summary
 `0x111`, `0x112`: 50 ms. `0x113`, `0x114`, `0x120`: 100 ms. `0x510`..`0x51D`: 1000 ms (gated ones need `0x105` D1 bit 0).
 The pack sends one extra `0x120` just before sleeping. After boot the first copy of each frame appears one period later.
 
@@ -257,7 +257,7 @@ Reply `0x594`: DLC = n + 4; B0 always `0x43` for reads; B1-B3 echo index/sub-ind
 
 Example: read vendor ID: send `0x614` data `40 18 10 01 00 00 00 00`; reply `0x594` data `43 18 10 01 01 00 00 00`.
 
-## 5. CAN2 (29-bit J1939-style IDs, source address 0xF3, little-endian)
+## 5. CAN (29-bit J1939-style IDs, source address 0xF3, little-endian)
 
 ID layout: priority (bits 28-26), PF/PS = PGN, SA = `0xF3`. `0x0Cxxxxxx` = priority 3, `0x18xxxxxx` = priority 6.
 All frames are DLC 8, sent unsolicited, no multiplexing and no request handling. Periods assume the 16 MHz crystal.
@@ -289,7 +289,7 @@ Temperature byte = degC + 40. Cell voltage in mV. Current = (raw16 - 32000) x 0.
 | `0x18FF30F3` | 5000 ms | constant bytes `CD E9 02 93 4A 00 00 00` |
 | `0x18FF31F3` | 500 ms | current-sensor scale/offset, cell limit |
 | `0x18FF32F3` | 500 ms | monitor-chip identity word |
-| `0x18FF50F3` | about 500 ms + events | log status or CAN1 error pattern |
+| `0x18FF50F3` | about 500 ms + events | log status or CAN11 error pattern |
 | `0x18FF51F3`, `0x18FF52F3` | reply only | event-log index, record dump |
 
 One scheduler sends at most one frame per 2 ms pass, in the order above, so right after boot some frames can be
@@ -310,10 +310,10 @@ tens of ms late [C]. The two one-shot frames `0x18FF08F3` and `0x0CF096F3` also 
 B0 max temp byte, B1 min temp byte, B2-B3 max cell mV, B4-B5 min cell mV, B6-B7 `FF FF`. [C]
 
 #### 0x0CF094F3 (defect)
-Bytes 0-3 were meant to carry the discharge and charge current limits but the firmware writes them into the CAN1
+Bytes 0-3 were meant to carry the discharge and charge current limits but the firmware writes them into the CAN11
 buffer, so the wire carries stale bytes from the previous frame (normally a copy of `0x0CFF21F3` bytes 0-3). **Ignore B0-B3.** [C]
 B4-B5 = SOC x 640 (100 % = 64000, 1 % steps). B6-B7 = a second SOC x 640 derived from the highest cell [I].
-The real current limits are on CAN1 `0x111`.
+The real current limits are on CAN11 `0x111`.
 
 #### 0x0CFF31F3
 B0-B1 smoothed current (same encoding as above). B2-B3 over-current event counter A. B4-B5 mean current of last samples. B6 = 0. B7 over-current event counter B (low byte). [C]
@@ -381,12 +381,12 @@ B0 cell number (1-14) of the max cell; B2 cell number of the min cell; B1 and B3
 
 #### 0x18FF50F3 / 51 / 52 (event log)
 * `0x18FF50F3` (a) log status: B0-B3 log write pointer (big-endian), B4 verify status (0 = ok), B5-B6 write count (BE), B7 last event code. Sent after each log write and about every 500 ms when idle.
-* `0x18FF50F3` (b) CAN1 error report from the CAN1 interrupt: all-same-byte patterns: `01 00 01 00 01 00 01 00` bus off, `02 02 02 02 02 02 02 02` transmit bus passive, `01 02 01 02 01 02 01 02` receive bus passive, `01 01 01 01 01 01 01 01` receive buffer overflow. No discriminator byte separates (a) from (b).
+* `0x18FF50F3` (b) CAN11 error report from the CAN11 interrupt: all-same-byte patterns: `01 00 01 00 01 00 01 00` bus off, `02 02 02 02 02 02 02 02` transmit bus passive, `01 02 01 02 01 02 01 02` receive bus passive, `01 01 01 01 01 01 01 01` receive buffer overflow. No discriminator byte separates (a) from (b).
 * `0x18FF51F3` (reply to command `0xC9`): B0-B3 latest record number (LE), B4-B7 raw pointer.
 * `0x18FF52F3` (reply to command `0xCB`): first frame B0 = 0, B1-B3 record number low bytes, B4-B7 first record bytes; then frames k = 1..36 with B0 = k and 7 record bytes each (record offsets 7k-3..7k+3). Record layout is not fully mapped.
 Event codes in B7 of `0x18FF50F3` (a): `0x0A` bootloader jump, `0x0C` current scale set, `0x0D` precharge word set, `0x0F` cell limit set, `0x10` permanent fault logged, `0x11` fault cleared, `0x12` write retry, `0x13` serial set, `0x14` model set, `0x15` host-silence sleep, `0x16` enable dropped.
 
-### 5.3 CAN2 frames the pack receives
+### 5.3 CAN frames the pack receives
 
 | ID | Effect |
 |---|---|
@@ -394,18 +394,18 @@ Event codes in B7 of `0x18FF50F3` (a): `0x0A` bootloader jump, `0x0C` current sc
 | `0x0CFFBC49` | Only data[4] is read, stored as the config byte (reported in `0x18FF08F3` B7). If data[4] is not 3 or 5 a transient warning bit (word bit 8) is set. Sender is probably a charger (node 0x49) [I]. |
 | `0x0C1BF349`, `0x0C1BFF49`, `0x18DFFFF3` | Accepted and ignored [C]. `0x18DFFFF3` is not a J1939 request (that would be PF `0xEA`). |
 
-There is no timeout on any CAN2 receive ID, and no J1939 request handling [C].
+There is no timeout on any CAN receive ID, and no J1939 request handling [C].
 
 ## 6. Operating model
 
-### 6.1 Modes (RAM `0x1678`, visible in CAN2 `0x18FF08F3` B0 and `0x0CFF20F3` B0)
+### 6.1 Modes (RAM `0x1678`, visible in CAN `0x18FF08F3` B0 and `0x0CFF20F3` B0)
 | Raw | Meaning |
 |---|---|
 | `0x10` | just booted; behaves as idle until a request arrives |
 | 1 | idle, contactors open |
 | 2 | discharge/drive path (entered when `0x105` D0 bits 0-1 are 0 and D1 bit 4 is set) |
 | 4 | charge path (D0 bits 0-1 non-zero, D1 bit 4 set); only mode where balancing runs |
-| 8 | service mode, entered by any CAN2 `0x0CFF00F3` frame |
+| 8 | service mode, entered by any CAN `0x0CFF00F3` frame |
 Names "charge" and "discharge" are inferred from the logic present in each mode [I]. The `0x105` timeout, fault checks and sleep logic all key on modes 2 and 4.
 
 Entry checks for modes 2 and 4: no fault bytes set, no non-zero latched word, max temperature below the over-temperature limit and
@@ -428,7 +428,7 @@ rises while B is closed and A is open [I]. Which firmware driver is the connecto
 The opening order (B first, then A, then a weld check) fits the redundancy: if one contactor welds, the check reports it and the other still opens the circuit.
 
 Contactors open on: `0x105` D1 bit 4 cleared, `0x105` timeout, any latched fault, enable input released, over-current, cell/temperature limits,
-monitor-chip communication failure, a CAN2 `0x0CFF00F3` frame, sleep.
+monitor-chip communication failure, a CAN `0x0CFF00F3` frame, sleep.
 
 ### 6.3 Protection thresholds (variant 0 values; six variants in the appendix)
 | Quantity | Threshold | Action |
@@ -449,7 +449,7 @@ Temperatures are degC + 40 internally. Thresholds are read from the active varia
 
 ### 6.4 Fault and status bits
 
-#### CAN1 `0x120` bytes (`0x1623`..`0x162A`); any non-zero = fault present
+#### CAN11 `0x120` bytes (`0x1623`..`0x162A`); any non-zero = fault present
 | Byte | Bit | Meaning | Conf |
 |---|---|---|---|
 | B0 | 1 | cell imbalance (max at or above 3800 mV and spread above limit) | [I] naming |
@@ -475,7 +475,7 @@ Temperatures are degC + 40 internally. Thresholds are read from the active varia
 Non-blocking warnings (they do not force idle or open the contactors): B1 bits 4 and 6, and B5 bit 5 [C]. Every other bit above is a fault that forces idle.
 Clear-faults (`0x105` D1 bit 1) clears all bytes except `0x1628` bits 1 and 7.
 
-#### CAN2 `0x18FF08F3` words (B2-B3 latched summary, B4-B5 live warnings)
+#### CAN `0x18FF08F3` words (B2-B3 latched summary, B4-B5 live warnings)
 | Bit | Latched summary word (B2-B3) | Live word (B4-B5) |
 |---|---|---|
 | 0 | cell under-voltage | low-cell warning |
@@ -496,8 +496,8 @@ Bits 5, 7, 11, 13, 14 are never set [C]. Names are inferred from the conditions 
 * Needs the max cell at or above the floor (default 3800 mV) for 300 passes, and a cell at least the start spread (default 40 mV) above the lowest for 60 passes.
   A cell already balancing stays selected until within the stop spread (default 10 mV).
 * The firmware writes `0x0200` (balance on) or `0` into monitor registers `0x0C`..`0x19` (one per cell) and refreshes them every 35 s.
-  The mask of bled cells is in CAN2 `0x0CF093F3` B4-B5 and a flag in CAN1 `0x113` B1 bit 0.
-* Change thresholds with CAN2 command `0xC3` (RAM only; reverts to defaults on the next charge-state init) (section 7).
+  The mask of bled cells is in CAN `0x0CF093F3` B4-B5 and a flag in CAN11 `0x113` B1 bit 0.
+* Change thresholds with CAN command `0xC3` (RAM only; reverts to defaults on the next charge-state init) (section 7).
 * Bleed resistor and current are hardware [?].
 
 ### 6.6 Current, SOC and capacity
@@ -506,7 +506,7 @@ Bits 5, 7, 11, 13, 14 are never set [C]. Names are inferred from the conditions 
 * SOC: looked up from cell voltage at start-up and after 900 s of rest (current under 1 A), integrated by coulomb counting once a second otherwise. Range 0..100.9 %.
 * Capacity default per variant: 73, 75, 98, 134, 72, 76 Ah (variant 0 = 73 Ah) [I unit]. SOH starts at 100 % and is reduced by wear tables driven by discharged Ah [I].
 
-## 7. Maintenance commands: CAN2 `0x0CFF00F3`
+## 7. Maintenance commands: CAN `0x0CFF00F3`
 
 Always send 8 data bytes. data[0] is the command. Pairs marked "inverse" must sum to `0xFF` (second byte = bitwise NOT of the first) or the command is silently ignored.
 Every frame with this ID, including bad or unknown commands, first forces **service mode (mode 8)**: the normal contactor logic stops and the contactor outputs are driven off every pass.
@@ -519,7 +519,7 @@ Commands execute in the CAN receive interrupt; leave at least 50 ms between comm
 | `0xC3` | `C3 xx S T FL FH ~FL ~FH` | balance start spread S (mV), stop spread T (mV), floor FH:FL (mV) | RAM only | none |
 | `0xC4` | `C4 xx xx xx VL VH ~VL ~VH` | cell charge-voltage limit V mV (clamped 3000..4245), reported in `0x18FF31F3` B2-B3 | yes (log) | `0x18FF50F3`, B7 = `0x0F` |
 | `0xC5` | `C5 xx P ~P LL LH ~LL ~LH` | precharge completion threshold P percent (default 70) and configuration word | yes | B7 = `0x0D` |
-| `0xC6` | `C6 D1 D2 D3 D4 D5 D6 D7` | set stored identity numbers (shown in CAN1 `0x510`). Refused on a pack with more than 5x capacity of lifetime discharge. | yes | B7 = `0x13` |
+| `0xC6` | `C6 D1 D2 D3 D4 D5 D6 D7` | set stored identity numbers (shown in CAN11 `0x510`). Refused on a pack with more than 5x capacity of lifetime discharge. | yes | B7 = `0x13` |
 | `0xC7` | `C7 xx xx xx xx xx xx xx` | **erases the event log** (first 16 blocks of the external memory) and rewrites current values. Same age gate. | yes | `0x18FF50F3` |
 | `0xC9` | `C9 xx xx xx xx xx xx xx` | read log index | no | `0x18FF51F3` |
 | `0xCB` | `CB N0 N1 N2 N3 xx xx xx` | dump log record N (LE); 1 + 36 frames on `0x18FF52F3` | no | `0x18FF52F3` |
@@ -551,8 +551,8 @@ Example frames (29-bit ID `0x0CFF00F3`, DLC 8):
 | RA1, RA2 (AN1, AN2) | voltage sense after/before the contactors | packv1 / packv2 | [I] |
 | RB12 | **enable input, active low; gates the contactor machine; release forces sleep** | one of den, cen (not en12v or estp, which are RB13 and RB14); unknown | [?] |
 | RB11 | debounced input, selects which fault word imbalance uses | the other of den, cen; unknown | [?] |
-| RB13 | debounced input, reported in CAN1 `0x113` B2 bit 0 | board pin `en12v` | [C] (bench-confirmed 2026-10-11) |
-| RB14 | debounced input, reported in CAN1 `0x113` B2 bit 1 | board pin `estp` | [C] (bench-confirmed 2026-10-11) |
+| RB13 | debounced input, reported in CAN11 `0x113` B2 bit 0 | board pin `en12v` | [C] (bench-confirmed 2026-10-11) |
+| RB14 | debounced input, reported in CAN11 `0x113` B2 bit 1 | board pin `estp` | [C] (bench-confirmed 2026-10-11) |
 | RB6 | wake pin in the sleep loop | unknown | [?] |
 | RA3, RA4, RD3 | aux outputs controlled by `0x105` D0 bits 6, 4, 2; shown on the diagnostic screen as "Battery Output MCU / VCM / DC-DC Power" | vehicle pins F, G, H in unknown order; board labels fatout / alout / fuout in unknown order | [I] medium-high / [?] order |
 | RC13, RC0, RD12 | "board on" outputs (12 V related) | 12vout = vehicle pin D, through a diode to the DC-DC converter | [I] medium-high |
@@ -560,33 +560,33 @@ Example frames (29-bit ID `0x0CFF00F3`, DLC 8):
 | RB8/RD11/RB15, RD0 | SPI1 to the MC33771B (clock, out, in, chip select) | | [C] |
 | RC2/RC7/RC8, RD9 | SPI2 to the external persistent memory | | [C] |
 | RB0 | temperature multiplexer select | | [C] |
-| RD6/RD5, RC5/RC4 | CAN1 TX/RX, CAN2 TX/RX | can11h/l, canh/l | [C]/[I] |
+| RD6/RD5, RC5/RC4 | CAN11 TX/RX, CAN TX/RX | can11h/l, canh/l | [C]/[I] |
 No CAN command reads or overrides RB11..RB14. RB13 and RB14 assert when their pin is tied to B- (active low, bench-confirmed 2026-10-11); this corrects the earlier guess in `analysis/core.md` that RB12 = en12v. The diagnostic screen's "Key Switch Input" and "Charger Input" labels therefore may not map to RB13/RB14 as guessed in section 2; unresolved. Known-good enable configuration: `estp` and `en12v` tied to B-, `den` at 12 V (permanent jumper to the 12V cavity), `cen` and `alout` unconnected; which of these RB12 needs is not isolated. `12vout` is a true output: the pack generates 12 V there by itself.
 
 ## 9. Dangerous and destructive operations
-* CAN1 `0x614` write `23 51 1F 01 00 00 00 00`: reboots into the bootloader with no password; the pack stops running until the bootloader hands back control.
-* CAN2 `0x0CFF00F3` command `0xC7` erases the event log; `0xD3` switches all protection thresholds to another variant; `0xEC` with a wrong gain corrupts all current readings and protections that use current; `0xC6` changes stored identity.
+* CAN11 `0x614` write `23 51 1F 01 00 00 00 00`: reboots into the bootloader with no password; the pack stops running until the bootloader hands back control.
+* CAN `0x0CFF00F3` command `0xC7` erases the event log; `0xD3` switches all protection thresholds to another variant; `0xEC` with a wrong gain corrupts all current readings and protections that use current; `0xC6` changes stored identity.
 * Any `0x0CFF00F3` frame opens the contactors (service mode). Do not send one to a pack that is carrying load.
 * Do not change balancing parameters, limits or variants unless the values are checked against the cell datasheet. This is a lithium pack: protections must stay armed.
 
 ## 10. Open questions and suggested bench tests
-1. **Crystal and bit rate.** CAN1 500 kbit/s is bench-confirmed (2026-10-11). The crystal is marked "ECS 16", probably 16 MHz. Confirm the full part number and measure 500 kbit/s with a scope or CAN analyzer on CAN1/CAN2. All periods and time-outs in this document assume it.
-2. **Which CAN is which.** Continuity from the vehicle "CAN main" pins to the board; confirm CAN1 is the vehicle bus.
+1. **Crystal and bit rate.** CAN11 500 kbit/s is bench-confirmed (2026-10-11). The crystal is marked "ECS 16", probably 16 MHz. Confirm the full part number and measure 500 kbit/s with a scope or CAN analyzer on CAN11/CAN. All periods and time-outs in this document assume it.
+2. **Which CAN is which.** Continuity from the vehicle "CAN main" pins to the board; confirm CAN11 is the vehicle bus.
 3. **Enable inputs.** Partly answered 2026-10-11: `en12v` = RB13 and `estp` = RB14, active low; `den`/`cen` = RB11/RB12 still unmapped and the input that RB12 needs is not isolated (Appendix D). Remaining: measure the active level of the board's `den`, `cen`, `estp`, `en12v` pins and map them to RB11..RB14 (section 8).
-   Check continuity from vehicle pins C, K, S, T, F, G, H, D to the 15-pin connector, then measure C, S, T with the key off and on, and watch CAN1 `0x113` B2 bits 0-1 and CAN2 `0x0CF096F3` B6 when K is asserted.
+   Check continuity from vehicle pins C, K, S, T, F, G, H, D to the 15-pin connector, then measure C, S, T with the key off and on, and watch CAN11 `0x113` B2 bits 0-1 and CAN `0x0CF096F3` B6 when K is asserted.
    Meter F, G, H while toggling `0x105` D0 bits 2, 4, 6 one at a time to learn which bit powers which output, and D with the pack awake and asleep.
    Assert C, then T/S, then K one at a time and see which of `0x113` B2 bits 0-1 changes (key switch versus charger input).
 4. **Contactor identity.** Which of driver A and driver B is the connector's Prelay and which is srelay, and what path the precharge output switches (probably across contactor A).
-5. **Current sign and unit.** Answered for CAN1, bench-confirmed 2026-10-11: `0x111` B0-B2 is 1 mA/count, positive = into the pack (+17.96 A while an 18 A bench supply charged the pack; owner confirmed the direction). CAN2 `0x0CF090F3` current uses the same stated convention (positive = charge) and is expected to match, not checked [I].
+5. **Current sign and unit.** Answered for CAN11, bench-confirmed 2026-10-11: `0x111` B0-B2 is 1 mA/count, positive = into the pack (+17.96 A while an 18 A bench supply charged the pack; owner confirmed the direction). CAN `0x0CF090F3` current uses the same stated convention (positive = charge) and is expected to match, not checked [I].
 16. **Delta-Q IC650 charger needs a CAN master.** Bench 2026-10-11: the Tempo-OEM IC650 speaks CANopen at 125 kbit/s as node 10 (heartbeat `0x70A`, state `0x7F` pre-operational, once per second when ACKed) and did not charge from pack voltage alone (contactors closed for 35 s, current 0). It needs a CAN master (the cart's VCM). Charger-side work lives in the separate `../deltaq-charger` repo.
 6. **Limit direction.** Confirm `0x111` B3-B4 is the discharge limit and B5-B6 the charge limit (change SOC or temperature and watch which moves).
-7. **Voltage ADC scale.** Partly answered: on the bench `0x112` B4-B5 matches the cell sum, B2-B3 read 50.5 V against 49.9 V and B6-B7 about 50 V after precharge, so the ADC scale is only approximate. The two high-voltage ADC channels (CAN2 `0x0CFF32F3` B2-B5, CAN1 `0x112` B2-B3, B6-B7) use a constant that has no writer in the image; compare with a meter.
+7. **Voltage ADC scale.** Partly answered: on the bench `0x112` B4-B5 matches the cell sum, B2-B3 read 50.5 V against 49.9 V and B6-B7 about 50 V after precharge, so the ADC scale is only approximate. The two high-voltage ADC channels (CAN `0x0CFF32F3` B2-B5, CAN11 `0x112` B2-B3, B6-B7) use a constant that has no writer in the image; compare with a meter.
 8. **Pin function of aux outputs** (`fatout`, `alout`, `fuout`) and what `0x105` D0 bits 2, 4, 6 do on the board.
 9. **Pack variant.** Answered: variant 0 (`0x113` B3 = 1, `0x513` B0 = 73 Ah), bench-confirmed 2026-10-11. The variant index comes from the external memory (byte offset `0xAC`), not a pin.
 10. **Counter units, SOH and capacity-learning fields** and the meaning of constants (`0x18FF30F3`, `0x51D` B6-B7, `0x513` B5).
 11. **Event-log record layout** (256-byte records dumped with command `0xCB`): not mapped; decode `FUN_rom_006efc` if the stored cell and temperature snapshot is needed.
-12. **Real transmit periods.** Partly measured 2026-10-11 on CAN1: `0x111`/`0x112` about 50 ms, `0x113`/`0x114`/`0x120` about 100 ms, `0x517`..`0x51C` 1000 ms. CAN2 not measured.
-13. **Capacity mismatch.** Still open: the pack itself reports 73 Ah in `0x513` B0 (bench, 2026-10-11, variant 0), against 67.5 Ah on the nameplate and 54 Ah on the screen. The diagnostic screen shows "Battery Ratings 54 Ah"; no variant table holds 54 Ah (73, 75, 98, 134, 72, 76). Read `0x513` B0 and CAN2 `0x0CFF3EF3` B0 and B6-B7 from the pack. A fourth number is now in play: the archived Vanguard "5kWh Commercial Battery Pack" datasheet (see "Pack nameplate" section above) lists 98.7 Ah, matching firmware variant 2 and this pack's directly-counted 32-parallel cells chemically (~3.08 Ah/cell), but not matching this unit's bench-read variant 0 (which the disassembled firmware's table pairs with 24 parallel, not the 32 actually counted inside it on 2026-10-14). Leading suspect, per the Status note at the top of this document: the disassembled firmware image was sourced from the internet, not extracted from this owner's own pack, so Appendix A's variant table may not describe the firmware revision actually running on this hardware. See open question 17.
+12. **Real transmit periods.** Partly measured 2026-10-11 on CAN11: `0x111`/`0x112` about 50 ms, `0x113`/`0x114`/`0x120` about 100 ms, `0x517`..`0x51C` 1000 ms. CAN not measured.
+13. **Capacity mismatch.** Still open: the pack itself reports 73 Ah in `0x513` B0 (bench, 2026-10-11, variant 0), against 67.5 Ah on the nameplate and 54 Ah on the screen. The diagnostic screen shows "Battery Ratings 54 Ah"; no variant table holds 54 Ah (73, 75, 98, 134, 72, 76). Read `0x513` B0 and CAN `0x0CFF3EF3` B0 and B6-B7 from the pack. A fourth number is now in play: the archived Vanguard "5kWh Commercial Battery Pack" datasheet (see "Pack nameplate" section above) lists 98.7 Ah, matching firmware variant 2 and this pack's directly-counted 32-parallel cells chemically (~3.08 Ah/cell), but not matching this unit's bench-read variant 0 (which the disassembled firmware's table pairs with 24 parallel, not the 32 actually counted inside it on 2026-10-14). Leading suspect, per the Status note at the top of this document: the disassembled firmware image was sourced from the internet, not extracted from this owner's own pack, so Appendix A's variant table may not describe the firmware revision actually running on this hardware. See open question 17.
 17. **Verify the variant table against this owner's own firmware.** The disassembled `DSPIC33EP128GS806.hex` was obtained from the internet, not dumped from any of the owner's own packs. Extract firmware directly from one of the owner's units (bootloader dump, in-circuit read, or similar) and diff it against the internet-sourced image, focusing on Appendix A's variant table (PSV addresses `0xB0B4`-`0xB6E0`) and the model-code-to-variant mapping in `0x113` B3. This would explain, or rule out, the variant-0/24-parallel vs. directly-counted-32-parallel conflict in open question 13.
 14. **Isolation resistance.** The diagnostic screen shows 10000 kOhm; no source for it was found in the firmware.
 15. **CAN transmit errors.** During the 6 s of `0x105` transmission on the bench the controller went error-passive once (TX error counter 67 at the end, RX errors 0). Not diagnosed; candidate causes: termination, bit timing. The owner chose to ignore it for now.
@@ -613,9 +613,9 @@ Which variant this pack runs is determined by reading `0x113` B3 or `0x0CFF3EF3`
 Owner photo of the Club Car diagnostic tool, "Battery Details" tab (pack state: SOC 12.50 %, main contactor Open). "MCU" there means motor control unit.
 | Screen field (value) | Firmware source | Match |
 |---|---|---|
-| Battery Ratings Ah (54) | CAN1 `0x513` B0 | **Conflict**: variant tables hold 73, 75, 98, 134, 72, 76 Ah; also doesn't match the 98.7 Ah archived "5kWh" datasheet figure (see "Pack nameplate" section) |
-| SOC (12.50 %) | CAN1 `0x113` B6, 0.5 % per count | confirms the scale (25 counts) |
-| Battery SOH (100.00 %) | `0x113` B5, or CAN2 `0x0CFF33F3` B0-B1 | consistent |
+| Battery Ratings Ah (54) | CAN11 `0x513` B0 | **Conflict**: variant tables hold 73, 75, 98, 134, 72, 76 Ah; also doesn't match the 98.7 Ah archived "5kWh" datasheet figure (see "Pack nameplate" section) |
+| SOC (12.50 %) | CAN11 `0x113` B6, 0.5 % per count | confirms the scale (25 counts) |
+| Battery SOH (100.00 %) | `0x113` B5, or CAN `0x0CFF33F3` B0-B1 | consistent |
 | Output MCU / VCM / DC-DC Power (Off / On / Off) | `0x105` D0 bits 2, 4, 6, echoed in `0x113` B0 bit 2, B1 bits 2 and 5 and `0x0CF096F3` B7 bits 1-3 | strong; VCM On while contactor Open shows they are not contactor-gated |
 | Safety Level (Normal) | fault bytes `0x120` | consistent |
 | Balancing State (Inactive) | `0x113` B1 bit 0 | consistent |
@@ -626,9 +626,9 @@ Owner photo of the Club Car diagnostic tool, "Battery Details" tab (pack state: 
 The tool's ABOUT and USAGE tabs probably map to `0x51D`/the `0x1018` identity objects and the `0x517`..`0x51C` counters [?].
 
 ## Appendix D. First live bench results (2026-10-11)
-Raspberry Pi with a Waveshare 2-CH CAN FD HAT; HAT can0 on the pack's 11-bit bus (`can11h`/`can11l`). Pack on the bench with only a voltmeter across B+/B-. All items below are bench-confirmed 2026-10-11 unless marked otherwise. CAN2 is not yet wired to the pack.
+Raspberry Pi with a Waveshare 2-CH CAN FD HAT; HAT can0 on the pack's 11-bit bus (`can11h`/`can11l`). Pack on the bench with only a voltmeter across B+/B-. All items below are bench-confirmed 2026-10-11 unless marked otherwise. CAN is not yet wired to the pack.
 * **Bus.** 500 kbit/s confirmed (ERROR-ACTIVE, zero RX errors). In listen-only mode nothing ACKs, so the pack retransmits its first frame (`0x113`) forever; with the controller in normal mode (it ACKs, sends nothing) all frames appear.
-* **Idle CAN1 frames and periods.** `0x111`, `0x112` about 50 ms; `0x113`, `0x114`, `0x120` about 100 ms; `0x517`, `0x518`, `0x519`, `0x51A`, `0x51B`, `0x51C` 1000 ms.
+* **Idle CAN11 frames and periods.** `0x111`, `0x112` about 50 ms; `0x113`, `0x114`, `0x120` about 100 ms; `0x517`, `0x518`, `0x519`, `0x51A`, `0x51B`, `0x51C` 1000 ms.
 * **Idle values.**
 | Item | Value |
 |---|---|

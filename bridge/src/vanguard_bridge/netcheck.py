@@ -7,13 +7,13 @@ unless all of these hold:
   (``/sys/class/net/<if>/device`` resolves to ``.../<spi_device>``), so a swapped
   can0/can1 enumeration is caught;
 * both interfaces are CAN, administratively UP, at 500000 bit/s;
-* pack CAN1 is not listen-only or loopback (it must transmit the keep-alive);
-* pack CAN1 has root qdisc ``prio 1:`` with exactly the three ``u32`` filters in
+* pack CAN11 is not listen-only or loopback (it must transmit the keep-alive);
+* pack CAN11 has root qdisc ``prio 1:`` with exactly the three ``u32`` filters in
   :data:`CAN1_U32_RULES` (allow the exact ``0x105`` and ``0x515`` frames, drop everything
   else, in that preference order);
-* pack CAN2 has root qdisc ``prio 1:`` with exactly one filter: ``basic`` without
+* pack CAN has root qdisc ``prio 1:`` with exactly one filter: ``basic`` without
   ematch (matches everything) with ``gact action drop``;
-* pack CAN2 is ``LISTEN-ONLY`` when the configured guard is ``listen-only``.
+* pack CAN is ``LISTEN-ONLY`` when the configured guard is ``listen-only``.
 
 The parsers read the text printed by iproute2 (``ip -details link show``,
 ``tc qdisc show``, ``tc filter show``). ``filter_can1_ok.txt`` in tests/ was captured on the
@@ -35,7 +35,7 @@ SysfsResolver = Callable[[str], Optional[str]]  # ifname -> SPI device name or N
 
 @dataclass(frozen=True)
 class U32Rule:
-    """One ``tc u32`` rule on pack CAN1. Each match is ``(value, mask, byte offset)``.
+    """One ``tc u32`` rule on pack CAN11. Each match is ``(value, mask, byte offset)``.
 
     Offsets are into the SocketCAN ``struct can_frame`` (the network header of a CAN skb):
     0 = ``can_id`` incl. EFF/RTR/ERR flag bits, 4 = ``len``, 8 = data[0..3], 12 = data[4..7].
@@ -139,7 +139,7 @@ def check_link(text: str, ifname: str, *, want_listen_only: bool, bitrate: int =
         errs.append(f"{ifname}: listen-only mode is not on")
     if not want_listen_only and lo:
         errs.append(f"{ifname}: listen-only is on but this is the transmit bus (pack CAN1); mapping swapped?")
-    if not want_listen_only:  # pack CAN1, the transmit bus
+    if not want_listen_only:  # pack CAN11, the transmit bus
         if "LOOPBACK" in info.ctrlmodes:
             errs.append(f"{ifname}: loopback mode is on")
         if "LOWER_UP" not in info.flags:

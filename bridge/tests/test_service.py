@@ -38,7 +38,7 @@ class Rig:
         self.buf = b""
 
     def connect(self, prime=True):
-        if prime:  # let the simulated pack send some CAN1 frames first
+        if prime:  # let the simulated pack send some CAN11 frames first
             self.advance(100_000)
         c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         c.connect(self.path)
@@ -107,7 +107,7 @@ def test_end_to_end_contactors_close_then_open_after_host_silence(rig):
     assert contactor_bits(lines)[-1] is True
     t_lines = [parse_line(ln) for ln in lines if ln.startswith("T ")]
     assert len(t_lines) == 30 and all(f.can_id == 0x105 for f in t_lines)
-    assert any(ln.startswith("R 2 ") for ln in lines)  # CAN2 telemetry arrives too
+    assert any(ln.startswith("R 2 ") for ln in lines)  # CAN telemetry arrives too
 
     # Host goes silent: bridge stops at 1 s, pack opens about 1 s after the last keep-alive.
     t_silent = rig.clock.t

@@ -2,7 +2,7 @@
 
 The simulator models a Vanguard BMS closely enough to exercise a host: it emits the
 periodic frames of CANBUS_PROTOCOL.md on both buses at the documented periods and
-reacts to a simulated host (``0x105`` keep-alive, ``0x515`` sleep, CAN2 service
+reacts to a simulated host (``0x105`` keep-alive, ``0x515`` sleep, CAN service
 frames, ``0x614`` service channel). It runs on simulated time: nothing sleeps unless
 the command line asks for real-time pacing.
 
@@ -341,7 +341,7 @@ class PackSimulator:
     def _warn_nonzero(self) -> bool:
         return bool(self.live_word or self.fault[1] & 0x50 or self.fault[5] & 0x20)
 
-    # CAN1
+    # CAN11
     def _v_pack_current_limits(self):
         self.counter = (self.counter + 1) & 0xFF
         return {"pack_current_ma": round(self.current_a * 1000), "discharge_limit_a": 120.0,
@@ -409,7 +409,7 @@ class PackSimulator:
         return {"fw_major": 2, "fw_minor": 9, "fw_patch": 7, "board_address": 0x28, "charge_target_mv": 4150,
                 "model_constant": 0}, None
 
-    # CAN2
+    # CAN
     def _cur(self):
         return round(self.current_a, 2)
 

@@ -6,7 +6,7 @@ from vanguard_bridge.txgate import check_tx
 
 
 class FakeWriter:
-    """Stands in for the pack CAN1 socket. Records (time, raw) and re-checks every write."""
+    """Stands in for the pack CAN11 socket. Records (time, raw) and re-checks every write."""
 
     def __init__(self, clock=None):
         self.clock = clock
@@ -30,7 +30,7 @@ class Harness:
     """Bridge + fake writer + fake clock (microseconds). No wall-clock time anywhere."""
 
     def __init__(self, pack_alive=True):
-        self.pack_alive = pack_alive  # feed pack CAN1 evidence (the 0x111 the pack sends every 50 ms)
+        self.pack_alive = pack_alive  # feed pack CAN11 evidence (the 0x111 the pack sends every 50 ms)
         self.now = 1_000_000_000  # arbitrary monotonic origin
         self.t0 = self.now
         self.writer = FakeWriter(lambda: self.now - self.t0)
