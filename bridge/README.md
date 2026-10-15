@@ -58,7 +58,7 @@ and reported once. Bytes outside 0x20..0x7E are rejected.
 | Line | Accepted when | Effect |
 |---|---|---|
 | `START DISCHARGE` / `START CHARGE` | STOPPED, pack CAN1 traffic seen (see below) | enter RUNNING; first `0x105` at once, then every 100 ms; D0 = `0x00` (discharge) or `0x01` (charge), D1 = `0x11`. Feeds the watchdog |
-| same `START` again | RUNNING in that mode | feeds the watchdog |
+| same `START` again | RUNNING in that mode, pack CAN1 traffic seen | feeds the watchdog; refused (and not counted as a heartbeat) when no pack CAN1 traffic was seen in the last 250 ms, so clients should use `HB` as the heartbeat |
 | `START` of the other mode | RUNNING | refused (`STOP` first) |
 | `HB` | any time | feeds the watchdog while RUNNING; no reply |
 | `STOP` | any time | enter STOPPED; `S OK STOP` |
