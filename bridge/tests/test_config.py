@@ -9,7 +9,7 @@ BASE = {"pack_can1": {"interface": "can1", "spi_device": "spi1.2"},
 def test_shipped_config_parses():
     import pathlib
     cfg = load(str(pathlib.Path(__file__).parents[1] / "system" / "bridge.toml"))
-    assert cfg.can2_guard == "listen-only" and cfg.socket_mode == 0o660 and cfg.socket_group == "vanguard"
+    assert cfg.can2_guard == "tc-drop-all" and cfg.can2_bitrate == 125_000 and cfg.socket_mode == 0o660 and cfg.socket_group == "vanguard"
     assert cfg.socket_path == "/run/vanguard-bridge/bridge.sock"
 
 

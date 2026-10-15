@@ -121,7 +121,7 @@ def parse_ip_details(text: str) -> Optional[LinkInfo]:
 BAD_CAN1_STATES = frozenset({"BUS-OFF", "STOPPED", "SLEEPING"})
 
 
-def check_link(text: str, ifname: str, *, want_listen_only: bool) -> list:
+def check_link(text: str, ifname: str, *, want_listen_only: bool, bitrate: int = BITRATE) -> list:
     info = parse_ip_details(text)
     if info is None:
         return [f"{ifname}: cannot parse 'ip -details link show' output"]
@@ -132,8 +132,8 @@ def check_link(text: str, ifname: str, *, want_listen_only: bool) -> list:
         errs.append(f"{ifname}: not a CAN interface")
     if "UP" not in info.flags:
         errs.append(f"{ifname}: not UP")
-    if info.bitrate != BITRATE:
-        errs.append(f"{ifname}: bitrate {info.bitrate} is not {BITRATE}")
+    if info.bitrate != bitrate:
+        errs.append(f"{ifname}: bitrate {info.bitrate} is not {bitrate}")
     lo = "LISTEN-ONLY" in info.ctrlmodes
     if want_listen_only and not lo:
         errs.append(f"{ifname}: listen-only mode is not on")
@@ -308,16 +308,16 @@ def check_can2_filter(text: str, ifname: str) -> list:
 def check_all(cfg: Config, run: Runner = run_cmd, spi_of: SysfsResolver = spi_device_of) -> list:
     """Return a list of problems; empty means the bridge may start."""
     errs: list = []
-    for bus, ifname, spi, listen_only, check_filter in (
-        (1, cfg.can1_interface, cfg.can1_spi_device, False, check_can1_filter),
-        (2, cfg.can2_interface, cfg.can2_spi_device, cfg.can2_guard == "listen-only", check_can2_filter),
+    for bus, ifname, spi, listen_only, bitrate, check_filter in (
+        (1, cfg.can1_interface, cfg.can1_spi_device, False, BITRATE, check_can1_filter),
+        (2, cfg.can2_interface, cfg.can2_spi_device, cfg.can2_guard == "listen-only", cfg.can2_bitrate, check_can2_filter),
     ):
         actual = spi_of(ifname)
         if actual != spi:
             errs.append(f"pack CAN{bus}: {ifname} is on SPI device {actual!r}, config says {spi!r}")
         rc, out = run(["ip", "-details", "link", "show", "dev", ifname])
         errs += [f"pack CAN{bus}: {e}" for e in
-                 (check_link(out, ifname, want_listen_only=listen_only) if rc == 0 else [f"{ifname}: ip failed: {_one_line(out)}"])]
+                 (check_link(out, ifname, want_listen_only=listen_only, bitrate=bitrate) if rc == 0 else [f"{ifname}: ip failed: {_one_line(out)}"])]
         rc, out = run(["tc", "qdisc", "show", "dev", ifname])
         errs += [f"pack CAN{bus}: {e}" for e in
                  (check_qdisc(out, ifname) if rc == 0 else [f"{ifname}: tc qdisc failed: {_one_line(out)}"])]

@@ -18,13 +18,18 @@ spi_device = "spi0.0"
 # Pack CAN2: 29-bit IDs. Receive only. A tc filter dropping every frame is always installed.
 interface = "can1"
 spi_device = "spi1.0"
-# Active: the controller is in listen-only mode (never ACKs, never transmits).
-guard = "listen-only"
+# The pack's CAN2 is not wired on this bench. The HAT channel carries the Delta-Q charger's own
+# CANopen bus (125 kbit/s, charger node 10), so it runs at 125 kbit/s and ACKs (tc-drop-all) so
+# the charger's heartbeat is received once per second instead of being retransmitted forever.
+# Default without this key is 500000 (the pack's CAN2 rate). Allowed: 125000, 250000, 500000.
+bitrate = 125000
+# Listen-only: the controller never ACKs, never transmits.
+# guard = "listen-only"
 # Fallback, only if listen-only makes the pack retransmit one frame forever (no other node on
 # CAN2 to ACK it): the controller runs in normal mode so it ACKs, and the drop-all tc filter is
 # what keeps it from transmitting frames. Comment the line above and uncomment this one, then
 # restart vanguard-can-setup.service and vanguard-bridge.service.
-# guard = "tc-drop-all"
+guard = "tc-drop-all"
 
 [socket]
 # Unix stream socket for the one controlling client (the web app).

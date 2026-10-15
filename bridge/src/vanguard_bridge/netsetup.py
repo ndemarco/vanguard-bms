@@ -66,13 +66,13 @@ def _can1_filters() -> list:
 def commands(cfg: Config) -> list:
     """Return ``(argv, may_fail)`` pairs, in order."""
     out = []
-    for ifname, listen_only, filters in (
-        (cfg.can1_interface, False, _can1_filters()),
-        (cfg.can2_interface, cfg.can2_guard == "listen-only", [["prio", "1", "basic", "action", "drop"]]),
+    for ifname, bitrate, listen_only, filters in (
+        (cfg.can1_interface, BITRATE, False, _can1_filters()),
+        (cfg.can2_interface, cfg.can2_bitrate, cfg.can2_guard == "listen-only", [["prio", "1", "basic", "action", "drop"]]),
     ):
         out += [
             (["ip", "link", "set", "dev", ifname, "down"], False),
-            (["ip", "link", "set", "dev", ifname, "type", "can", "bitrate", str(BITRATE),
+            (["ip", "link", "set", "dev", ifname, "type", "can", "bitrate", str(bitrate),
               "listen-only", "on" if listen_only else "off"], False),
             (["ip", "link", "set", "dev", ifname, "txqueuelen", str(TXQUEUELEN)], False),
             (["tc", "qdisc", "del", "dev", ifname, "root"], True),

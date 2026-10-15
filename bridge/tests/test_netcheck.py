@@ -249,3 +249,34 @@ def test_netsetup_stops_on_command_failure(tmp_path):
         return (1, "RTNETLINK answers: Operation not permitted") if argv[:2] == ["ip", "link"] else (0, "")
     assert netsetup.main(["--config", _write_cfg(tmp_path)], run=runner, spi_of=SPI, out=io.StringIO()) == 1
     assert len(executed) == 1
+
+
+# ---------------------------------------------- pack CAN2 channel bitrate (e.g. a 125 kbit/s charger bus)
+
+def test_can2_bitrate_defaults_to_500k_and_is_configurable():
+    from dataclasses import replace
+    assert CFG.can2_bitrate == 500_000
+    cmds = [c for c, _ in netsetup.commands(replace(CFG, can2_bitrate=125_000))]
+    assert ["ip", "link", "set", "dev", "can1", "type", "can", "bitrate", "125000", "listen-only", "on"] in cmds
+    assert ["ip", "link", "set", "dev", "can0", "type", "can", "bitrate", "500000", "listen-only", "off"] in cmds  # pack CAN1 unchanged
+
+
+def test_check_link_uses_the_given_bitrate():
+    t = sample("ip_can2_listen_only_ok.txt")
+    assert check_link(t, "can1", want_listen_only=True) == []
+    assert check_link(t, "can1", want_listen_only=True, bitrate=125_000)  # 500k link does not match 125k config
+    assert check_link(t.replace("bitrate 500000", "bitrate 125000"), "can1", want_listen_only=True, bitrate=125_000) == []
+
+
+def test_config_bitrate_validation():
+    from vanguard_bridge.config import ConfigError, parse
+    base = {"pack_can1": {"interface": "can0", "spi_device": "spi0.0"},
+            "pack_can2": {"interface": "can1", "spi_device": "spi1.0"}}
+    assert parse(base).can2_bitrate == 500_000
+    ok = {**base, "pack_can2": {**base["pack_can2"], "bitrate": 125000}}
+    assert parse(ok).can2_bitrate == 125_000
+    assert "bitrate=125000" in parse(ok).mapping_lines()[1]
+    assert "bitrate=500000" in parse(ok).mapping_lines()[0]
+    for bad in (0, 100000, 1000000, "125000", True):
+        with pytest.raises(ConfigError):
+            parse({**base, "pack_can2": {**base["pack_can2"], "bitrate": bad}})

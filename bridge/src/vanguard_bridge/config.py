@@ -14,6 +14,7 @@ from typing import Optional
 
 DEFAULT_PATH = "/etc/vanguard-bridge/bridge.toml"
 BITRATE = 500_000
+CAN2_BITRATES = (125_000, 250_000, 500_000)  # pack CAN2 channel only; pack CAN1 is always BITRATE
 CAN2_GUARDS = ("listen-only", "tc-drop-all")
 _IFNAME = re.compile(r"^[A-Za-z0-9_.-]{1,15}$")
 _SPIDEV = re.compile(r"^spi\d+\.\d+$")
@@ -30,6 +31,7 @@ class Config:
     can2_interface: str
     can2_spi_device: str
     can2_guard: str = "listen-only"
+    can2_bitrate: int = BITRATE
     socket_path: str = "/run/vanguard-bridge/bridge.sock"
     socket_mode: int = 0o660
     socket_group: Optional[str] = "vanguard"
@@ -40,7 +42,7 @@ class Config:
             f"CONFIG pack-can1 interface={self.can1_interface} spi={self.can1_spi_device} "
             f"bitrate={BITRATE} ids=11-bit transmit=allowlist(0x105,0x515)",
             f"CONFIG pack-can2 interface={self.can2_interface} spi={self.can2_spi_device} "
-            f"bitrate={BITRATE} ids=29-bit transmit=none guard={self.can2_guard}",
+            f"bitrate={self.can2_bitrate} ids=29-bit transmit=none guard={self.can2_guard}",
         ]
 
 
@@ -64,6 +66,7 @@ def parse(d: dict) -> Config:
     c2i = _get(d, "pack_can2", "interface", str)
     c2s = _get(d, "pack_can2", "spi_device", str)
     guard = _get(d, "pack_can2", "guard", str, "listen-only")
+    bitrate2 = _get(d, "pack_can2", "bitrate", int, BITRATE)
     path = _get(d, "socket", "path", str, Config.socket_path)
     mode_s = _get(d, "socket", "mode", str, "0660")
     group = _get(d, "socket", "group", str, "vanguard") or None
@@ -78,6 +81,8 @@ def parse(d: dict) -> Config:
         raise ConfigError("pack CAN1 and pack CAN2 must use different interfaces and SPI devices")
     if guard not in CAN2_GUARDS:
         raise ConfigError(f"[pack_can2] guard must be one of {CAN2_GUARDS}")
+    if bitrate2 not in CAN2_BITRATES:
+        raise ConfigError(f"[pack_can2] bitrate must be one of {CAN2_BITRATES}")
     if not re.fullmatch(r"0?[0-7]{3}", mode_s):
         raise ConfigError("[socket] mode must be an octal string such as \"0660\"")
     mode = int(mode_s, 8)
@@ -87,7 +92,7 @@ def parse(d: dict) -> Config:
         raise ConfigError("[socket] path must be absolute")
     if not 1.0 <= recheck <= 60.0:
         raise ConfigError("[checks] recheck_interval_s must be 1..60")
-    return Config(c1i, c1s, c2i, c2s, guard, path, mode, group, recheck)
+    return Config(c1i, c1s, c2i, c2s, guard, bitrate2, path, mode, group, recheck)
 
 
 def load(path: str = DEFAULT_PATH) -> Config:
