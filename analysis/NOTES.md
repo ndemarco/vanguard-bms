@@ -23,7 +23,7 @@ SCRATCH=/tmp/claude-1000/-home-nick-projects-nickydoes-vanguard-battery-revival/
 - $SCRATCH/NOTES.md          : this file
 - $SCRATCH/dfp/xc16/support/dsPIC33E/gld/p33EP128GS806.gld : SFR name = address (e.g. C1CTRL1 = 0x480)
 - $SCRATCH/dfp/xc16/support/dsPIC33E/h/p33EP128GS806.h : SFR bit-field definitions (use for decoding)
-- Hex source: /home/nick/projects/nickydoes/vanguard-battery-revival/DSPIC33EP128GS806.hex
+- Hex source: the board's full flash read, DSPIC33EP128GS806.hex. Not in this repository (the firmware belongs to its manufacturer).
 Section output goes to $SCRATCH/sections/<your-name>.md.
 
 ## Gotchas
