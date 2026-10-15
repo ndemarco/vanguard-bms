@@ -1,6 +1,21 @@
-filter protocol all pref 1 basic chain 0 
-filter protocol all pref 1 basic chain 0 handle 0x1 
-  NOT canid(sff 0x105 sff 0x515)
+filter protocol all pref 1 u32 chain 0 
+filter protocol all pref 1 u32 chain 0 fh 800: ht divisor 1 
+filter protocol all pref 1 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1 not_in_hw 
+  match 05010000/ffffffff at 0
+  match 08000000/ff000000 at 4
+  match 00110000/fefdffff at 8
+  match 00000000/ffffffff at 12
+filter protocol all pref 2 u32 chain 0 
+filter protocol all pref 2 u32 chain 0 fh 801: ht divisor 1 
+filter protocol all pref 2 u32 chain 0 fh 801::800 order 2048 key ht 801 bkt 0 flowid 1:1 not_in_hw 
+  match 15050000/ffffffff at 0
+  match 08000000/ff000000 at 4
+  match 10000000/dfffffff at 8
+  match 00000000/ffffffff at 12
+filter protocol all pref 3 u32 chain 0 
+filter protocol all pref 3 u32 chain 0 fh 802: ht divisor 1 
+filter protocol all pref 3 u32 chain 0 fh 802::800 order 2048 key ht 802 bkt 0 terminal flowid not_in_hw 
+  match 00000000/00000000 at 0
 	action order 1: gact action drop
 	 random type none pass val 0
 	 index 1 ref 1 bind 1

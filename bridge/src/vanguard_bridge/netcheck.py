@@ -8,15 +8,16 @@ unless all of these hold:
   can0/can1 enumeration is caught;
 * both interfaces are CAN, administratively UP, at 500000 bit/s;
 * pack CAN1 is not listen-only or loopback (it must transmit the keep-alive);
-* pack CAN1 has root qdisc ``prio 1:`` with exactly one filter:
-  ``basic`` ematch ``NOT canid(sff 0x105 sff 0x515)`` with ``gact action drop``;
+* pack CAN1 has root qdisc ``prio 1:`` with exactly the three ``u32`` filters in
+  :data:`CAN1_U32_RULES` (allow the exact ``0x105`` and ``0x515`` frames, drop everything
+  else, in that preference order);
 * pack CAN2 has root qdisc ``prio 1:`` with exactly one filter: ``basic`` without
   ematch (matches everything) with ``gact action drop``;
 * pack CAN2 is ``LISTEN-ONLY`` when the configured guard is ``listen-only``.
 
 The parsers read the text printed by iproute2 (``ip -details link show``,
-``tc qdisc show``, ``tc filter show``). The sample texts in tests/ were written from
-the iproute2 print code, not captured on the Pi: verify on the Pi (README).
+``tc qdisc show``, ``tc filter show``). ``filter_can1_ok.txt`` in tests/ was captured on the
+Pi; the other samples were written from the iproute2 print code (README).
 """
 
 from __future__ import annotations
@@ -32,7 +33,33 @@ from .config import BITRATE, Config
 Runner = Callable[[list], tuple]  # argv -> (returncode, combined output)
 SysfsResolver = Callable[[str], Optional[str]]  # ifname -> SPI device name or None
 
-CAN1_ALLOWED_IDS = frozenset({("sff", 0x105), ("sff", 0x515)})
+@dataclass(frozen=True)
+class U32Rule:
+    """One ``tc u32`` rule on pack CAN1. Each match is ``(value, mask, byte offset)``.
+
+    Offsets are into the SocketCAN ``struct can_frame`` (the network header of a CAN skb):
+    0 = ``can_id`` incl. EFF/RTR/ERR flag bits, 4 = ``len``, 8 = data[0..3], 12 = data[4..7].
+    The values are the memory bytes of the little-endian struct, as tc prints them
+    (``0x105`` is bytes ``05 01 00 00``). ``flowid`` None means ``action drop``.
+    """
+
+    pref: int
+    matches: tuple
+    flowid: Optional[str]
+
+
+# Same allowlist as txgate.check_tx, enforced a second time by the kernel. The kernel in use has
+# no em_canid, so the ID and the payload are matched byte-wise with u32. The ID word is matched
+# whole, so extended, RTR and error frames never match an allow rule.
+CAN1_U32_RULES = (
+    # 0x105: len 8, D0 in {00,01}, D1 in {11,13}, D2..D7 = 0
+    U32Rule(1, ((0x05010000, 0xFFFFFFFF, 0), (0x08000000, 0xFF000000, 4),
+                (0x00110000, 0xFEFDFFFF, 8), (0x00000000, 0xFFFFFFFF, 12)), "1:1"),
+    # 0x515: len 8, D0 in {10,30}, D1..D7 = 0
+    U32Rule(2, ((0x15050000, 0xFFFFFFFF, 0), (0x08000000, 0xFF000000, 4),
+                (0x10000000, 0xDFFFFFFF, 8), (0x00000000, 0xFFFFFFFF, 12)), "1:1"),
+    U32Rule(3, ((0x00000000, 0x00000000, 0),), None),  # everything else: drop
+)
 CMD_TIMEOUT_S = 0.5
 _CMD_ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"}
 
@@ -167,25 +194,6 @@ def parse_tc_filters(text: str) -> list:
     return out
 
 
-_IDSPEC = re.compile(r"(sff|eff)\s+0x([0-9a-fA-F]+)(?::0x([0-9a-fA-F]+))?")
-
-
-def _canid_list(arg: str) -> Optional[set]:
-    """Parse ``sff 0x105 sff 0x515``; None if anything is left over or a mask is present."""
-    ids = set()
-    pos = 0
-    arg = arg.strip()
-    while pos < len(arg):
-        m = _IDSPEC.match(arg, pos)
-        if not m or m.group(3) is not None:
-            return None
-        ids.add((m.group(1), int(m.group(2), 16)))
-        pos = m.end()
-        while pos < len(arg) and arg[pos] == " ":
-            pos += 1
-    return ids
-
-
 def _single_drop_filter(text: str, ifname: str) -> tuple:
     filters = parse_tc_filters(text)
     if len(filters) != 1:
@@ -207,24 +215,81 @@ def _single_drop_filter(text: str, ifname: str) -> tuple:
     return f, errs
 
 
+_U32_RULE_HDR = re.compile(r"\bfh\s+\S+:\S*:\S+")
+_U32_MATCH = re.compile(r"^match\s+([0-9a-fA-F]{8})/([0-9a-fA-F]{8})\s+at\s+(\d+)$")
+_U32_ACTION_DETAIL = re.compile(r"^(random type none pass val 0|index \d+ ref \d+ bind \d+)$")
+
+
+def parse_u32_rules(text: str) -> tuple:
+    """Return ``(rules, problems)``: each rule is ``(pref, matches, flowid, actions)``.
+
+    ``problems`` lists everything unexpected in a rule (kind, chain, protocol, unknown tokens or
+    lines) so a rule with extra features such as a link, offset or police cannot pass unnoticed.
+    """
+    problems: list = []
+    raw: list = []
+    cur = None
+    for ln in text.splitlines():
+        m = re.match(r"^filter\s+(?:parent\s+\S+\s+)?protocol\s+(\S+)\s+pref\s+(\d+)\s+(\S+)(.*)$", ln)
+        if m:
+            cur = None
+            if _U32_RULE_HDR.search(m.group(4)) or re.search(r"\bhandle\b", m.group(4)):
+                cur = {"proto": m.group(1), "pref": int(m.group(2)), "kind": m.group(3), "rest": m.group(4), "body": []}
+                raw.append(cur)
+        elif cur is not None and ln.strip():
+            cur["body"].append(ln.strip())
+    rules = []
+    for r in raw:
+        who = f"pref {r['pref']}"
+        if r["kind"] != "u32":
+            problems.append(f"{who}: filter kind {r['kind']!r} is not 'u32'")
+        if r["proto"] != "all":
+            problems.append(f"{who}: filter protocol {r['proto']!r} is not 'all'")
+        rest = r["rest"]
+        cm = re.search(r"\bchain\s+(\S+)", rest)
+        if cm and cm.group(1) != "0":
+            problems.append(f"{who}: filter is not in chain 0")
+        rest = re.sub(r"\bchain\s+\S+", "", rest)
+        rest = re.sub(r"\bfh\s+\S+", "", rest)
+        rest = re.sub(r"\border\s+\d+", "", rest)
+        rest = re.sub(r"\bkey\s+ht\s+\S+\s+bkt\s+\d+", "", rest)
+        rest = re.sub(r"\bterminal\b(\s+flowid(?=\s|$)(\s+\?\?\?)?)?", "", rest)
+        rest = re.sub(r"\b(not_in_hw|in_hw)\b", "", rest)
+        flowid = None
+        fm = re.search(r"\bflowid\s+(\S+)", rest)
+        if fm:
+            flowid = fm.group(1)
+            rest = rest.replace(fm.group(0), "")
+        if rest.strip():
+            problems.append(f"{who}: unexpected filter text {rest.strip()!r}")
+        matches: list = []
+        actions: list = []
+        for b in r["body"]:
+            mm = _U32_MATCH.match(b)
+            am = re.match(r"^action order \d+:\s*(.*)$", b)
+            if mm:
+                matches.append((int(mm.group(1), 16), int(mm.group(2), 16), int(mm.group(3))))
+            elif am:
+                actions.append(am.group(1).strip())
+            elif not _U32_ACTION_DETAIL.match(b):
+                problems.append(f"{who}: unexpected line {b!r}")
+        rules.append((r["pref"], tuple(matches), flowid, tuple(actions)))
+    return rules, problems
+
+
 def check_can1_filter(text: str, ifname: str) -> list:
-    f, errs = _single_drop_filter(text, ifname)
-    if f is None:
-        return errs
-    body = "\n".join(f.body)
-    matches = re.findall(r"(?i)(\bNOT\s+)?\b(\w+)\(([^()]*)\)", body)
-    if len(matches) != 1:
-        return errs + [f"{ifname}: expected exactly one ematch, found {len(matches)}"]
-    neg, kind, arg = matches[0]
-    if kind.lower() != "canid":
-        errs.append(f"{ifname}: ematch is {kind!r}, not canid")
-    if not neg:
-        errs.append(f"{ifname}: canid ematch is not inverted (NOT); it would drop the allowed IDs")
-    if re.search(r"(?i)\b(AND|OR)\b", body):
-        errs.append(f"{ifname}: ematch tree has AND/OR terms")
-    ids = _canid_list(arg)
-    if ids != CAN1_ALLOWED_IDS:
-        errs.append(f"{ifname}: canid list {arg.strip()!r} is not exactly 'sff 0x105 sff 0x515' without masks")
+    rules, problems = parse_u32_rules(text)
+    errs = [f"{ifname}: {p}" for p in problems]
+    got = []
+    for pref, matches, flowid, actions in rules:
+        drop = len(actions) == 1 and re.match(r"^gact action drop\b", actions[0]) is not None
+        if actions and not drop:
+            errs.append(f"{ifname}: pref {pref}: action is not a single 'gact action drop'")
+        got.append((pref, matches, "DROP" if drop else flowid))
+    want = [(r.pref, r.matches, r.flowid or "DROP") for r in CAN1_U32_RULES]
+    if sorted(got) != sorted(want):
+        errs.append(f"{ifname}: tc filters are not exactly the {len(want)} expected u32 rules "
+                    f"(found {len(rules)}; see CAN1_U32_RULES)")
     return errs
 
 

@@ -184,7 +184,7 @@ Raspberry Pi OS bookworm, 64-bit. Run every command on the Pi.
        ls -l /sys/class/net/can0/device /sys/class/net/can1/device
 
    Expect two "MCP2518FD ... successfully initialized" lines and links ending in `spi1.0` and
-   `spi0.0` (in either order).
+   `spi0.0` (in either order). The `can0`/`can1` to `spi0.0`/`spi1.0` order differs between boots and between Pis, so `bridge.toml` must match what `ls -l /sys/class/net/can0/device` shows.
 3. Termination: CAN1 and CAN2 are separate buses; fit the HAT's 120 ohm jumper on a channel
    only if the HAT is at one end of that bus (with only the pack and the HAT, it is).
 4. Decide the wiring (which HAT terminal goes to pack CAN1, which to pack CAN2), then install
@@ -251,7 +251,7 @@ captured; replace it with real output after step A.
     tc filter show dev can1 parent 1:
 
 Expect `LOWER_UP` and a state other than BUS-OFF / STOPPED / SLEEPING on pack CAN1, `bitrate 500000` on both, `can <LISTEN-ONLY> state` on pack CAN2 only, `qdisc prio 1:
-root` on both, a filter in chain 0, `NOT canid(sff 0x105 sff 0x515)` with `gact action drop` on pack CAN1, and a
+root` on both, three `u32` filters in chain 0 on pack CAN1 (allow the exact `0x105` and `0x515` frames to class 1:1 for prefs 1 and 2, `gact action drop` for everything else at pref 3; `netcheck.CAN1_U32_RULES`), and a
 `basic` filter with no match and `gact action drop` on pack CAN2. Then copy the outputs over
 `tests/samples/ip_can1_ok.txt`, `ip_can2_listen_only_ok.txt`, `qdisc_prio_ok.txt`,
 `filter_can1_ok.txt` and `filter_can2_dropall_ok.txt` and rerun the tests. If the text differs,
@@ -279,8 +279,8 @@ H/L, fit both termination jumpers. Pack CAN1 is assumed to be `can0` here.
    `cansend can0 00000105#0011000000000000` (extended ID 0x105) and
    `cansend can0 0CFF00F3#0000000000000000`. The `dropped` figure in
    `tc -s qdisc show dev can0` rises by one per refused frame.
-6. Check how the kernel filter treats remote frames: `cansend can0 105#R`. The tc filter looks
-   at the ID only, so this is expected to appear; the bridge's own allowlist refuses RTR.
+6. Remote frames: `cansend can0 105#R` must not appear either. The u32 rule matches the whole ID
+   word including the RTR flag, so it is dropped in the kernel as well as refused by the bridge.
 7. Pack CAN2 drop-all: `candump -td can0` in the second terminal, then
    `cansend can1 0CFF00F3#0000000000000000` and `cansend can1 105#0011000000000000`: neither may appear.
 8. Listen-only: `sudo systemctl restart vanguard-can-setup` (restores listen-only on `can1`),
@@ -305,15 +305,16 @@ pack CAN1 lines at the HAT.
 
 **D. Hardware facts not confirmed from the Waveshare wiki:** which kernel name each controller
 gets (handled by the SPI check), the exact SPI device names (`spi1.0`/`spi0.0`, step 2), that
-the mcp2515 driver accepts `listen-only on` (step A), that `em_canid`, `cls_basic`, `sch_prio`
-and `act_gact` exist in the Raspberry Pi kernel (`sudo modprobe -a can can_raw sch_prio cls_basic em_canid act_gact`),
+the mcp2515 driver accepts `listen-only on` (step A), that `cls_u32`, `cls_basic`, `sch_prio`
+and `act_gact` exist in the Raspberry Pi kernel (`sudo modprobe -a can can_raw sch_prio cls_basic cls_u32 act_gact`; the Pi kernel has no `em_canid`, which is why pack CAN1 uses u32 byte matches),
 and that a qdisc added while the interface is down survives `ip link set up` (step A shows it).
 The overlays come from the Waveshare 2-CH CAN FD HAT wiki: SPI0 and SPI1 each with chip select 0, interrupts on
 BCM 25/24, and the overlay lines in `system/config.txt.snippet`.
 
 ## Known limits
 
-* The tc filter checks the CAN ID only. DLC, payload bytes and the RTR flag are enforced by
+* The tc filter checks the ID word (so EFF, RTR and error frames never match), the length and all
+  eight payload bytes, but not the three padding bytes of the `can_frame`. The padding is enforced by
   `txgate.check_tx` alone.
 * If pack CAN1 stops ACKing, the CAN controller retries its current frame forever (error-passive,
   not bus-off). The setup uses `txqueuelen 1` (not the wiki's 65536), and the bridge exits on

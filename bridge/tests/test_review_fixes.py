@@ -164,7 +164,7 @@ def test_can1_error_passive_allowed_and_lower_up_required():
 def test_filter_chain_must_be_zero():
     assert check_can1_filter(CAN1_OK, "can0") == []
     assert check_can1_filter(CAN1_OK.replace(" chain 0", ""), "can0") == []
-    assert "can0: filter is not in chain 0" in check_can1_filter(CAN1_OK.replace("chain 0", "chain 1"), "can0")
+    assert any("not in chain 0" in e for e in check_can1_filter(CAN1_OK.replace("chain 0", "chain 1"), "can0"))
     assert netcheck.check_can2_filter(CAN2_OK.replace("chain 0", "chain 7"), "can1")
 
 

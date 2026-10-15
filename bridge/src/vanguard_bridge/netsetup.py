@@ -10,7 +10,9 @@ Commands per interface (shown for the shipped config; ``--dry-run`` prints them)
     ip link set dev can0 txqueuelen 1
     tc qdisc del dev can0 root                      # failure ignored (none yet)
     tc qdisc add dev can0 root handle 1: prio
-    tc filter add dev can0 parent 1: protocol all prio 1 basic match 'not canid(sff 0x105 sff 0x515)' action drop
+    tc filter add dev can0 parent 1: protocol all prio 1 u32 match u32 0x05010000 0xffffffff at 0 ... flowid 1:1
+    tc filter add dev can0 parent 1: protocol all prio 2 u32 match u32 0x15050000 0xffffffff at 0 ... flowid 1:1
+    tc filter add dev can0 parent 1: protocol all prio 3 u32 match u32 0 0 at 0 action drop
     ip link set dev can0 up
 
     ip link set dev can1 down
@@ -21,12 +23,12 @@ Commands per interface (shown for the shipped config; ``--dry-run`` prints them)
     tc filter add dev can1 parent 1: protocol all prio 1 basic action drop
     ip link set dev can1 up
 
-Filter syntax: tc-ematch(8) ("canid( IDLIST )", "IDSPEC := { 'sff' CANID | 'eff' CANID }",
-"TERM := [ not ] { MATCH | '(' EXPR ')' }") with the ``basic`` classifier (tc-basic(8)); the
-kernel side is net/sched/em_canid.c (Linux 3.6 and later, CONFIG_NET_EMATCH_CANID).
-In em_canid an ``sff`` rule only matches frames without the EFF flag, so
-``not canid(sff 0x105 sff 0x515)`` is true for every extended frame and every other
-standard ID. A ``basic`` filter without ``match`` matches every packet.
+Pack CAN1 uses three ``u32`` filters (netcheck.CAN1_U32_RULES): two that let the exact
+0x105 and 0x515 frames through (ID word, length and payload bytes are matched on the raw
+``struct can_frame``) and one that drops everything else. Raspberry Pi kernels do not ship
+the ``em_canid`` ematch, so the ID is matched byte-wise. The u32 values are the little-endian
+memory bytes of the struct, so this setup refuses to run on a big-endian host. A ``basic``
+filter without ``match`` matches every packet (pack CAN2: drop all).
 After setup the same checks as the bridge's startup check run; any failure exits 1.
 """
 
@@ -38,9 +40,8 @@ from typing import Optional
 
 from . import config as config_mod
 from .config import BITRATE, Config
-from .netcheck import check_all, run_cmd, spi_device_of
+from .netcheck import CAN1_U32_RULES, check_all, run_cmd, spi_device_of
 
-CAN1_FILTER_EMATCH = "not canid(sff 0x105 sff 0x515)"
 # One frame. With no ACK on pack CAN1 the controller retries its current frame forever and
 # the queue fills; a deep queue would hold stale keep-alives that burst out when the pack is
 # reconnected. The bridge exits on any TX error, and ExecStartPre re-runs this setup, whose
@@ -48,12 +49,26 @@ CAN1_FILTER_EMATCH = "not canid(sff 0x105 sff 0x515)"
 TXQUEUELEN = 1
 
 
+def _can1_filters() -> list:
+    """The ``tc filter add`` tails for pack CAN1, one per rule, from the table the checker uses."""
+    if sys.byteorder != "little":
+        raise RuntimeError("the CAN1 u32 filter values assume a little-endian host")
+    out = []
+    for rule in CAN1_U32_RULES:
+        argv = ["prio", str(rule.pref), "u32"]
+        for value, mask, offset in rule.matches:
+            argv += ["match", "u32", f"0x{value:08x}", f"0x{mask:08x}", "at", str(offset)]
+        argv += ["flowid", rule.flowid] if rule.flowid else ["action", "drop"]
+        out.append(argv)
+    return out
+
+
 def commands(cfg: Config) -> list:
     """Return ``(argv, may_fail)`` pairs, in order."""
     out = []
-    for ifname, listen_only, filt in (
-        (cfg.can1_interface, False, ["basic", "match", CAN1_FILTER_EMATCH, "action", "drop"]),
-        (cfg.can2_interface, cfg.can2_guard == "listen-only", ["basic", "action", "drop"]),
+    for ifname, listen_only, filters in (
+        (cfg.can1_interface, False, _can1_filters()),
+        (cfg.can2_interface, cfg.can2_guard == "listen-only", [["prio", "1", "basic", "action", "drop"]]),
     ):
         out += [
             (["ip", "link", "set", "dev", ifname, "down"], False),
@@ -62,9 +77,9 @@ def commands(cfg: Config) -> list:
             (["ip", "link", "set", "dev", ifname, "txqueuelen", str(TXQUEUELEN)], False),
             (["tc", "qdisc", "del", "dev", ifname, "root"], True),
             (["tc", "qdisc", "add", "dev", ifname, "root", "handle", "1:", "prio"], False),
-            (["tc", "filter", "add", "dev", ifname, "parent", "1:", "protocol", "all", "prio", "1"] + filt, False),
-            (["ip", "link", "set", "dev", ifname, "up"], False),
         ]
+        out += [(["tc", "filter", "add", "dev", ifname, "parent", "1:", "protocol", "all"] + f, False) for f in filters]
+        out.append((["ip", "link", "set", "dev", ifname, "up"], False))
     return out
 
 

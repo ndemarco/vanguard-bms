@@ -50,38 +50,74 @@ def test_qdisc():
 
 def test_can1_filter_ok():
     assert check_can1_filter(CAN1_OK, "can0") == []
-    assert check_can1_filter(CAN1_OK.replace("NOT canid", "not canid"), "can0") == []
 
 
 @pytest.mark.parametrize("mutate", [
     lambda t: "",                                                          # no filter
-    lambda t: t.replace("NOT ", ""),                                       # not inverted
-    lambda t: t.replace("sff 0x515", "sff 0x515 sff 0x614"),               # extra ID
-    lambda t: t.replace(" sff 0x515", ""),                                 # missing ID
-    lambda t: t.replace("sff 0x515", "eff 0x515"),                         # wrong frame format
-    lambda t: t.replace("sff 0x105", "sff 0x105:0x700"),                   # mask
-    lambda t: t.replace("sff 0x105", "sff 0x100:0x700"),
+    lambda t: t.split("filter protocol all pref 3")[0],                    # no drop-everything rule
+    lambda t: t.split("filter protocol all pref 2")[0],                    # missing the 0x515 rule
+    lambda t: t.replace("05010000/ffffffff", "06010000/ffffffff"),         # wrong ID
+    lambda t: t.replace("05010000/ffffffff", "05010000/ffff0000"),         # looser ID mask (matches flag bits)
+    lambda t: t.replace("08000000/ff000000", "08000000/00000000"),         # length not checked
+    lambda t: t.replace("00110000/fefdffff", "00110000/fcfdffff"),         # D0 bit 1 unchecked
+    lambda t: t.replace("00110000/fefdffff", "00110000/fefd0000"),         # D2/D3 unchecked
+    lambda t: t.replace("00000000/ffffffff at 12", "00000000/ffff0000 at 12"),  # D6/D7 unchecked
+    lambda t: t.replace("10000000/dfffffff", "10000000/cfffffff"),         # 0x515 D0 allows deep shutdown
     lambda t: t.replace("gact action drop", "gact action pass"),           # pass instead of drop
     lambda t: t.replace("gact action drop", "gact action continue"),
-    lambda t: t.replace("basic", "u32"),
-    lambda t: t.replace("protocol all", "protocol ip"),
-    lambda t: t + t.replace("handle 0x1", "handle 0x2"),                   # a second filter
-    lambda t: t.replace("NOT canid(sff 0x105 sff 0x515)", "NOT canid(sff 0x105 sff 0x515)\nAND meta(...)"),
-    lambda t: t.replace("NOT canid(sff 0x105 sff 0x515)", "NOT cmp(u8 at 0 layer 2 eq 5)"),
-    lambda t: t.replace("handle 0x1 ", "handle 0x1 flowid 1:1 "),
-    lambda t: t.replace("\taction order 1: gact action drop\n", ""),        # no action
+    lambda t: t.replace("u32 chain 0 fh 800::800", "basic chain 0 fh 800::800"),  # wrong kind
+    lambda t: t.replace("protocol all pref 1", "protocol ip pref 1"),
+    lambda t: t + t.replace("pref 1", "pref 4").replace("fh 800", "fh 803"),     # a fourth rule
+    lambda t: t.replace("flowid 1:1", "flowid 1:2", 1),                    # allow rule steered elsewhere
+    lambda t: t.replace("\taction order 1: gact action drop\n", ""),       # no action on the drop rule
     lambda t: t.replace("action order 1: gact action drop",
                         "action order 1: gact action drop\n\taction order 2: gact action pass"),
-    lambda t: t.replace("NOT canid(sff 0x105 sff 0x515)", "NOT canid(sff 0x105 sff 0x515 junk)"),
+    lambda t: t.replace("bkt 0 flowid 1:1", "bkt 0 link 801: flowid 1:1", 1),  # jump to another table
+    lambda t: t.replace("match 08000000/ff000000 at 4", "match 08000000/ff000000 at 4\n  offset 0f00"),
 ])
 def test_can1_filter_rejects(mutate):
     assert check_can1_filter(mutate(CAN1_OK), "can0")
 
 
+def _u32_verdict(raw: bytes) -> bool:
+    """Evaluate CAN1_U32_RULES the way the kernel does: first matching rule wins."""
+    for rule in sorted(netcheck.CAN1_U32_RULES, key=lambda r: r.pref):
+        if all(int.from_bytes(raw[off:off + 4], "big") & mask == value for value, mask, off in rule.matches):
+            return rule.flowid is not None
+    raise AssertionError("no rule matched")
+
+
+def test_can1_u32_rules_equal_the_software_allowlist():
+    """The kernel layer must allow exactly what txgate.check_tx allows (padding aside)."""
+    import struct
+    from vanguard_bridge.canframe import CAN_EFF_FLAG, CAN_RTR_FLAG, CAN_ERR_FLAG, FRAME_FMT
+    from vanguard_bridge.txgate import check_tx
+    n_allowed = 0
+    for word in (0x105, 0x515, 0x614, 0x106, 0x104, 0x7FF, 0x000, 0x105 | CAN_EFF_FLAG, 0x105 | CAN_RTR_FLAG,
+                 0x515 | CAN_ERR_FLAG, 0x515 | CAN_EFF_FLAG, 0x0CFF00F3 | CAN_EFF_FLAG, 0x405, 0x505):
+        for dlc in (0, 4, 7, 8):
+            for d0 in range(256):
+                for d1 in range(256):
+                    data = bytes([d0, d1, 0, 0, 0, 0, 0, 0])
+                    raw = struct.pack(FRAME_FMT, word, dlc, b"\0\0\0", data)
+                    want = check_tx(raw) is None
+                    assert _u32_verdict(raw) == want, (hex(word), dlc, d0, d1)
+                    n_allowed += want
+    assert n_allowed == 2 * 2 + 2  # 0x105: D0{00,01} x D1{11,13}; 0x515: D0{10,30}
+    for i in range(2, 8):  # any non-zero payload byte beyond D1 is refused
+        for v in (1, 0x80, 0xFF):
+            data = bytearray(8)
+            data[1] = 0x11
+            data[i] = v
+            for word in (0x105, 0x515):
+                raw = struct.pack(FRAME_FMT, word, 8, b"\0\0\0", bytes(data))
+                assert not _u32_verdict(raw)
+
+
 def test_can2_filter():
     assert check_can2_filter(CAN2_OK, "can1") == []
     assert check_can2_filter("", "can1")
-    assert check_can2_filter(CAN1_OK, "can1")  # has an ematch: does not drop everything
+    assert check_can2_filter(CAN1_OK, "can1")  # three u32 rules, not a single drop-all
     assert check_can2_filter(CAN2_OK.replace("drop", "pass"), "can1")
 
 
@@ -120,7 +156,7 @@ def test_check_all_ok_and_commands():
 
 @pytest.mark.parametrize("key,value,needle", [
     (("ip", "can1"), (0, sample("ip_can1_ok.txt").replace("can0:", "can1:")), "listen-only mode is not on"),
-    (("filter", "can0"), (0, ""), "exactly one tc filter"),
+    (("filter", "can0"), (0, ""), "expected u32 rules"),
     (("filter", "can0"), (2, "Error: Parent Qdisc doesn't exists."), "tc filter failed"),
     (("filter", "can1"), (0, ""), "pack CAN2"),
     (("qdisc", "can0"), (0, sample("qdisc_default.txt")), "root qdisc"),
@@ -158,8 +194,10 @@ def test_netsetup_commands():
     cmds = [c for c, _ in netsetup.commands(CFG)]
     assert ["ip", "link", "set", "dev", "can0", "type", "can", "bitrate", "500000", "listen-only", "off"] in cmds
     assert ["ip", "link", "set", "dev", "can1", "type", "can", "bitrate", "500000", "listen-only", "on"] in cmds
-    assert ["tc", "filter", "add", "dev", "can0", "parent", "1:", "protocol", "all", "prio", "1", "basic", "match",
-            "not canid(sff 0x105 sff 0x515)", "action", "drop"] in cmds
+    can0_filters = [c for c in cmds if c[:5] == ["tc", "filter", "add", "dev", "can0"]]
+    assert [c[9:11] for c in can0_filters] == [["prio", "1"], ["prio", "2"], ["prio", "3"]]
+    assert can0_filters[2][-2:] == ["action", "drop"]
+    assert all(c[-2:] == ["flowid", "1:1"] for c in can0_filters[:2])
     assert ["tc", "filter", "add", "dev", "can1", "parent", "1:", "protocol", "all", "prio", "1", "basic", "action",
             "drop"] in cmds
     # filters are installed before each interface is brought up
